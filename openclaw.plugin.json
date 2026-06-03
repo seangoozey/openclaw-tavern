@@ -18,6 +18,19 @@
     "slug": "openclaw-tavern-plugin",
     "category": "roleplay"
   },
+  "contracts": {
+    "tools": [
+      "rp_generate_image"
+    ]
+  },
+  "toolMetadata": {
+    "rp_generate_image": {
+      "optional": true
+    }
+  },
+  "activation": {
+    "onStartup": true
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -44,6 +57,14 @@
             "minLength": 1
           }
         }
+      },
+      "allowedAgents": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "default": []
       }
     }
   }

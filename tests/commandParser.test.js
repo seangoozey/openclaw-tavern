@@ -13,3 +13,8 @@ test("parse repeated options", () => {
   const parsed = parseRpCommand("/rp start --lorebook a --lorebook b");
   assert.deepEqual(parsed.options.lorebook, ["a", "b"]);
 });
+
+test("parse quoted Windows paths without treating path separators as escapes", () => {
+  const parsed = parseRpCommand('/rp import-card --file "C:\\tmp\\card.json"');
+  assert.equal(parsed.options.file, "C:\\tmp\\card.json");
+});

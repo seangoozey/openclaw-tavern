@@ -63,6 +63,52 @@ function defaultCompanionIdleMinutes(sessionManager, fallback = 120) {
   return fallback;
 }
 
+function parsePositiveNumber(value, fallback, label) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new RPError(RP_ERROR_CODES.BAD_REQUEST, `${label} must be a positive number`);
+  }
+  return n;
+}
+
+function parsePositiveInteger(value, fallback, label) {
+  const n = parsePositiveNumber(value, fallback, label);
+  if (!Number.isInteger(n)) {
+    throw new RPError(RP_ERROR_CODES.BAD_REQUEST, `${label} must be a positive integer`);
+  }
+  return n;
+}
+
+function normalizeQuietHours(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return { quietStart: null, quietEnd: null };
+  }
+  const match = raw.match(/^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    throw new RPError(RP_ERROR_CODES.BAD_REQUEST, "--quiet-hours must use HH:MM-HH:MM");
+  }
+  const startHour = Number(match[1]);
+  const startMinute = Number(match[2]);
+  const endHour = Number(match[3]);
+  const endMinute = Number(match[4]);
+  if (
+    startHour > 23 ||
+    endHour > 23 ||
+    startMinute > 59 ||
+    endMinute > 59
+  ) {
+    throw new RPError(RP_ERROR_CODES.BAD_REQUEST, "--quiet-hours must use valid 24-hour times");
+  }
+  return {
+    quietStart: `${String(startHour).padStart(2, "0")}:${String(startMinute).padStart(2, "0")}`,
+    quietEnd: `${String(endHour).padStart(2, "0")}:${String(endMinute).padStart(2, "0")}`,
+  };
+}
+
 function normalizeAgentImageProvider(value) {
   const provider = String(value || "").trim().toLowerCase();
   if (!provider) {
@@ -128,6 +174,7 @@ function helpText() {
     "  /rp video [--prompt \"...\"] [--style \"...\"]   生成 2 秒短视频",
     "  /rp agent-image [--provider inherit|openai|gemini] [--model \"...\"] [--clear-model] [--enable|--disable]",
     "  /rp companion-nudge [--reason \"...\"] [--idle-minutes N] [--mode balanced|checkin|question|report] [--force]",
+    "  /rp companion-auto [--enable|--disable] [--min-hours N] [--max-per-day N] [--quiet-hours HH:MM-HH:MM]",
     "  /rp pause / resume / end",
   ].join("\n");
 }
@@ -526,6 +573,8 @@ export class CommandRouter {
         return this.agentImage(nctx, options);
       case "companion-nudge":
         return this.companionNudge(nctx, options);
+      case "companion-auto":
+        return this.companionAuto(nctx, options);
       default:
         throw new RPError(RP_ERROR_CODES.BAD_REQUEST, `Unknown command: ${command}`);
     }
@@ -1284,6 +1333,86 @@ export class CommandRouter {
       idle_minutes: result.idleMinutes,
       memory_recall_count: result.memoryRecallCount,
       turn_index: result.turn?.turn_index,
+    });
+  }
+
+  companionAuto(ctx, options = {}) {
+    if (ctx.channelType !== "telegram") {
+      throw new RPError(RP_ERROR_CODES.BAD_REQUEST, "Automatic companion outreach is only supported for Telegram sessions");
+    }
+    if (typeof this.store.upsertCompanionSchedule !== "function") {
+      throw new RPError(RP_ERROR_CODES.INTERNAL_ERROR, "Companion scheduling is unavailable for this store");
+    }
+
+    const channelSessionKey = buildChannelSessionKey(ctx);
+    const session = this.store.getSessionByChannelKey(channelSessionKey);
+    if (!session) {
+      throw new RPError(RP_ERROR_CODES.SESSION_NOT_FOUND, "Start an RP session before configuring companion-auto");
+    }
+
+    const enable = Boolean(options.enable);
+    const disable = Boolean(options.disable);
+    if (enable && disable) {
+      throw new RPError(RP_ERROR_CODES.BAD_REQUEST, "Use either --enable or --disable, not both");
+    }
+
+    if (!enable && !disable) {
+      const schedule = this.store.getCompanionSchedule?.(session.id);
+      if (!schedule) {
+        return ok("Companion auto outreach is not configured", {
+          enabled: false,
+          session_id: session.id,
+        });
+      }
+      return ok(schedule.enabled ? "Companion auto outreach is enabled" : "Companion auto outreach is disabled", {
+        schedule,
+        enabled: Boolean(schedule.enabled),
+        session_id: session.id,
+      });
+    }
+
+    const minIdleMinutes = parseIdleMinutes(
+      options?.["idle-minutes"] ?? options?.idle_minutes,
+      defaultCompanionIdleMinutes(this.sessionManager),
+    );
+    const minHours = parsePositiveNumber(options?.["min-hours"] ?? options?.min_hours, 4, "--min-hours");
+    const maxPerDay = parsePositiveInteger(options?.["max-per-day"] ?? options?.max_per_day, 3, "--max-per-day");
+    const mode = normalizeCompanionMode(options?.mode || "balanced");
+    const quiet = normalizeQuietHours(options?.["quiet-hours"] ?? options?.quiet_hours ?? "");
+    const now = new Date();
+    const schedule = this.store.upsertCompanionSchedule({
+      sessionId: session.id,
+      enabled: enable ? true : false,
+      channelType: ctx.channelType,
+      platformContextId: ctx.platformContextId,
+      channelId: ctx.channelId,
+      userId: ctx.userId,
+      chatId: ctx.platformContextId,
+      accountId: ctx.accountId || null,
+      messageThreadId: ctx.messageThreadId ?? null,
+      mode,
+      reason: options?.reason ? String(options.reason) : "scheduled companion heartbeat",
+      minIdleMinutes,
+      minIntervalMinutes: minHours * 60,
+      maxPerDay,
+      quietStart: quiet.quietStart,
+      quietEnd: quiet.quietEnd,
+      timezone: options?.timezone ? String(options.timezone) : null,
+      nextEligibleAt: now.toISOString(),
+    });
+
+    if (disable) {
+      return ok("Companion auto outreach disabled", {
+        enabled: false,
+        session_id: session.id,
+        schedule,
+      });
+    }
+
+    return ok("Companion auto outreach enabled", {
+      enabled: true,
+      session_id: session.id,
+      schedule,
     });
   }
 }

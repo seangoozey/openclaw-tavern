@@ -120,6 +120,7 @@ Note: install entry names vary by gateway version (plugin manager button vs admi
 - `/rp video [--prompt "..."] [--style "..."]`
 - `/rp agent-image [--provider inherit|openai|gemini] [--model "..."] [--clear-model] [--enable|--disable]`
 - `/rp companion-nudge [--reason "..."] [--idle-minutes N] [--mode balanced|checkin|question|report] [--force]`
+- `/rp companion-auto [--enable|--disable] [--min-hours N] [--max-per-day N] [--quiet-hours HH:MM-HH:MM] [--idle-minutes N] [--mode balanced|checkin|question|report]`
 - `/rp sync-agent-persona` — write current RP character into the agent's `SOUL.md`
 - `/rp restore-agent-persona` — remove RP character preset from `SOUL.md`, restore original persona
 - `/rp pause` / `/rp resume` / `/rp end`
@@ -132,7 +133,17 @@ Note: install entry names vary by gateway version (plugin manager button vs admi
 
 # Trigger only when user has been idle for 3 hours
 /rp companion-nudge --idle-minutes 180 --mode checkin
+
+# Enable conservative autonomous Telegram outreach for the active RP session
+/rp companion-auto --enable --min-hours 6 --max-per-day 2 --quiet-hours 22:00-08:00 --idle-minutes 180 --mode checkin
+
+# Disable autonomous outreach for the active RP session
+/rp companion-auto --disable
 ```
+
+`companion-auto` is opt-in per Telegram RP session. It only sends while the
+session is active, respects quiet hours and daily limits, and waits for a user
+reply before sending another autonomous message.
 
 `companion_tick` hook input example (for scheduler/automation):
 
@@ -171,6 +182,7 @@ Add plugin config under your OpenClaw config:
     "entries": {
       "openclaw-rp-plugin": {
         "config": {
+          "allowedAgents": ["main"],
           "agentImage": {
             "enabled": true,
             "provider": "openai",
@@ -186,6 +198,7 @@ Add plugin config under your OpenClaw config:
 - `agentImage.enabled`: exposes the `rp_generate_image` tool
 - `agentImage.provider`: `inherit`, `openai`, or `gemini`
 - `agentImage.imageModel`: overrides only the agent image-generation model, without changing the `/rp` dialogue model
+- `allowedAgents`: optional list of OpenClaw agent IDs allowed to use `/rp` commands and RP hooks. Empty or omitted means all agents.
 
 To let an OpenClaw agent use it, also allow `rp_generate_image` in the agent tool config. On OpenClaw `2026.3.x`, the recommended config is:
 

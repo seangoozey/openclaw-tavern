@@ -114,3 +114,54 @@ test("companion nudge returns proactive message blocks", async () => {
   assert.equal(nudged.response.data.content.includes("❓"), true);
   assert.equal(typeof nudged.response.data.companion, "object");
 });
+
+test("companion-auto stores per-session Telegram schedule", async () => {
+  const tgCtx = (content, extras = {}) =>
+    makeCtx(content, {
+      channelType: "telegram",
+      platformContextId: "12345",
+      channelId: "12345",
+      ...extras,
+    });
+  const plugin = createRPPlugin({
+    modelProvider: {
+      async generate() {
+        return {
+          content: JSON.stringify({
+            proactive_message: "checking in",
+            proactive_question: "how are you?",
+            action_report: "will wait",
+          }),
+        };
+      },
+    },
+  });
+
+  let r = await plugin.hooks.message_received(
+    tgCtx("/rp import-card", {
+      attachments: [{ filename: "alice.json", content: Buffer.from(JSON.stringify({ name: "Alice" })).toString("base64") }],
+    }),
+  );
+  const cardId = r.response.data.asset_id;
+  r = await plugin.hooks.message_received(
+    tgCtx("/rp import-preset", {
+      attachments: [{ filename: "preset.json", content: Buffer.from(JSON.stringify({ temperature: 0.7 })).toString("base64") }],
+    }),
+  );
+  const presetId = r.response.data.asset_id;
+  await plugin.hooks.message_received(tgCtx(`/rp start --card ${cardId} --preset ${presetId}`));
+
+  const enabled = await plugin.hooks.message_received(
+    tgCtx('/rp companion-auto --enable --min-hours 6 --max-per-day 2 --quiet-hours 22:00-08:00 --mode checkin'),
+  );
+  assert.equal(enabled.response.ok, true);
+  assert.equal(enabled.response.data.enabled, true);
+  assert.equal(enabled.response.data.schedule.min_interval_minutes, 360);
+  assert.equal(enabled.response.data.schedule.max_per_day, 2);
+  assert.equal(enabled.response.data.schedule.quiet_start, "22:00");
+  assert.equal(enabled.response.data.schedule.quiet_end, "08:00");
+
+  const disabled = await plugin.hooks.message_received(tgCtx("/rp companion-auto --disable"));
+  assert.equal(disabled.response.ok, true);
+  assert.equal(disabled.response.data.enabled, false);
+});

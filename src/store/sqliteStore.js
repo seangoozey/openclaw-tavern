@@ -661,6 +661,148 @@ export class SqliteStore {
     };
   }
 
+  upsertCompanionSchedule(input = {}) {
+    const session = this.getSessionById(input.sessionId);
+    if (!session) {
+      throw new RPError(RP_ERROR_CODES.SESSION_NOT_FOUND, "Session not found");
+    }
+    const existing = this.getCompanionSchedule(input.sessionId);
+    const row = {
+      enabled: input.enabled ?? existing?.enabled ?? false,
+      channel_type: input.channelType ?? input.channel_type ?? existing?.channel_type ?? session.channel_type,
+      platform_context_id:
+        input.platformContextId ?? input.platform_context_id ?? existing?.platform_context_id ?? "",
+      channel_id: input.channelId ?? input.channel_id ?? existing?.channel_id ?? "",
+      user_id: input.userId ?? input.user_id ?? existing?.user_id ?? session.user_id,
+      chat_id: input.chatId ?? input.chat_id ?? existing?.chat_id ?? null,
+      account_id: input.accountId ?? input.account_id ?? existing?.account_id ?? null,
+      message_thread_id:
+        input.messageThreadId ?? input.message_thread_id ?? existing?.message_thread_id ?? null,
+      mode: input.mode ?? existing?.mode ?? "balanced",
+      reason: input.reason ?? existing?.reason ?? null,
+      min_idle_minutes: input.minIdleMinutes ?? input.min_idle_minutes ?? existing?.min_idle_minutes ?? 120,
+      min_interval_minutes:
+        input.minIntervalMinutes ?? input.min_interval_minutes ?? existing?.min_interval_minutes ?? 240,
+      max_per_day: input.maxPerDay ?? input.max_per_day ?? existing?.max_per_day ?? 3,
+      quiet_start: input.quietStart ?? input.quiet_start ?? existing?.quiet_start ?? null,
+      quiet_end: input.quietEnd ?? input.quiet_end ?? existing?.quiet_end ?? null,
+      timezone: input.timezone ?? existing?.timezone ?? null,
+      next_eligible_at:
+        input.nextEligibleAt ?? input.next_eligible_at ?? existing?.next_eligible_at ?? new Date().toISOString(),
+    };
+
+    this.db
+      .prepare(
+        `INSERT INTO rp_companion_schedules
+         (session_id, enabled, channel_type, platform_context_id, channel_id, user_id, chat_id, account_id,
+          message_thread_id, mode, reason, min_idle_minutes, min_interval_minutes, max_per_day, quiet_start,
+          quiet_end, timezone, next_eligible_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(session_id) DO UPDATE SET
+           enabled = excluded.enabled,
+           channel_type = excluded.channel_type,
+           platform_context_id = excluded.platform_context_id,
+           channel_id = excluded.channel_id,
+           user_id = excluded.user_id,
+           chat_id = excluded.chat_id,
+           account_id = excluded.account_id,
+           message_thread_id = excluded.message_thread_id,
+           mode = excluded.mode,
+           reason = excluded.reason,
+           min_idle_minutes = excluded.min_idle_minutes,
+           min_interval_minutes = excluded.min_interval_minutes,
+           max_per_day = excluded.max_per_day,
+           quiet_start = excluded.quiet_start,
+           quiet_end = excluded.quiet_end,
+           timezone = excluded.timezone,
+           next_eligible_at = excluded.next_eligible_at,
+           failure_count = 0,
+           last_error = NULL,
+           updated_at = CURRENT_TIMESTAMP`,
+      )
+      .run(
+        session.id,
+        row.enabled ? 1 : 0,
+        row.channel_type,
+        row.platform_context_id,
+        row.channel_id,
+        row.user_id,
+        row.chat_id,
+        row.account_id,
+        row.message_thread_id == null ? null : Number(row.message_thread_id),
+        row.mode,
+        row.reason,
+        Number(row.min_idle_minutes),
+        Number(row.min_interval_minutes),
+        Number(row.max_per_day),
+        row.quiet_start,
+        row.quiet_end,
+        row.timezone,
+        row.next_eligible_at,
+      );
+    return this.getCompanionSchedule(session.id);
+  }
+
+  getCompanionSchedule(sessionId) {
+    const row = this.db.prepare("SELECT * FROM rp_companion_schedules WHERE session_id = ?").get(sessionId);
+    return row ? { ...clone(row), enabled: Boolean(row.enabled) } : null;
+  }
+
+  listDueCompanionSchedules(nowIso, limit = 20) {
+    return this.db
+      .prepare(
+        `SELECT cs.*, s.status, s.updated_at AS session_updated_at
+         FROM rp_companion_schedules cs
+         JOIN rp_sessions s ON s.id = cs.session_id
+         WHERE cs.enabled = 1
+           AND s.status = 'active'
+           AND (cs.next_eligible_at IS NULL OR cs.next_eligible_at <= ?)
+         ORDER BY cs.next_eligible_at ASC
+         LIMIT ?`,
+      )
+      .all(nowIso, Number(limit) || 20)
+      .map((row) => ({ ...clone(row), enabled: Boolean(row.enabled) }));
+  }
+
+  markCompanionScheduleSent({ sessionId, sentAt, nextEligibleAt, sentCountDate, sentCount }) {
+    this.db
+      .prepare(
+        `UPDATE rp_companion_schedules
+         SET last_sent_at = ?,
+             next_eligible_at = ?,
+             sent_count_date = ?,
+             sent_count = ?,
+             consecutive_sent = consecutive_sent + 1,
+             failure_count = 0,
+             last_error = NULL,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE session_id = ?`,
+      )
+      .run(sentAt, nextEligibleAt, sentCountDate, Number(sentCount) || 0, sessionId);
+    return this.getCompanionSchedule(sessionId);
+  }
+
+  markCompanionScheduleFailure({ sessionId, error, nextEligibleAt }) {
+    this.db
+      .prepare(
+        `UPDATE rp_companion_schedules
+         SET failure_count = failure_count + 1,
+             last_error = ?,
+             next_eligible_at = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE session_id = ?`,
+      )
+      .run(String(error || "").slice(0, 500), nextEligibleAt, sessionId);
+    return this.getCompanionSchedule(sessionId);
+  }
+
+  resetCompanionConsecutiveCount(sessionId) {
+    const result = this.db
+      .prepare("UPDATE rp_companion_schedules SET consecutive_sent = 0, updated_at = CURRENT_TIMESTAMP WHERE session_id = ?")
+      .run(sessionId);
+    return Boolean(result?.changes);
+  }
+
   upsertTurnEmbedding({ sessionId, turnIndex, role, content, language, vector, model }) {
     const dim = Array.isArray(vector) ? vector.length : 0;
     const embeddingJson = JSON.stringify(Array.isArray(vector) ? vector : []);

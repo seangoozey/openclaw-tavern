@@ -117,4 +117,36 @@ CREATE TABLE IF NOT EXISTS rp_turn_embeddings (
 
 CREATE INDEX IF NOT EXISTS idx_turn_embeddings_session_turn
   ON rp_turn_embeddings(session_id, turn_index);
+
+CREATE TABLE IF NOT EXISTS rp_companion_schedules (
+  session_id TEXT PRIMARY KEY REFERENCES rp_sessions(id) ON DELETE CASCADE,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  channel_type TEXT NOT NULL,
+  platform_context_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  chat_id TEXT,
+  account_id TEXT,
+  message_thread_id INTEGER,
+  mode TEXT NOT NULL DEFAULT 'balanced',
+  reason TEXT,
+  min_idle_minutes REAL NOT NULL DEFAULT 120,
+  min_interval_minutes REAL NOT NULL DEFAULT 240,
+  max_per_day INTEGER NOT NULL DEFAULT 3,
+  quiet_start TEXT,
+  quiet_end TEXT,
+  timezone TEXT,
+  last_sent_at DATETIME,
+  next_eligible_at DATETIME,
+  sent_count INTEGER NOT NULL DEFAULT 0,
+  sent_count_date TEXT,
+  consecutive_sent INTEGER NOT NULL DEFAULT 0,
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_companion_schedules_due
+  ON rp_companion_schedules(enabled, next_eligible_at);
 `;

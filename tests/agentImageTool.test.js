@@ -4,6 +4,7 @@ import {
   AGENT_IMAGE_TOOL_NAME,
   createAgentImageTool,
   getOpenClawRpPluginConfig,
+  normalizeAllowedAgentIds,
   normalizeAgentImageConfig,
 } from "../src/openclaw/agentImageTool.js";
 
@@ -34,6 +35,13 @@ test("getOpenClawRpPluginConfig reads nested plugin entry config", () => {
 
   assert.equal(config.agentImage.provider, "openai");
   assert.equal(config.agentImage.imageModel, "gpt-image-1");
+});
+
+test("normalizeAllowedAgentIds returns unique non-empty IDs", () => {
+  assert.deepEqual(
+    normalizeAllowedAgentIds({ allowedAgents: ["main", "main", " rp-agent ", ""] }),
+    ["main", "rp-agent"],
+  );
 });
 
 test("agent image tool returns MEDIA line and model override", async () => {
@@ -96,4 +104,27 @@ test("agent image tool reports disabled state", async () => {
   });
 
   assert.match(result.content?.[0]?.text || "", /disabled/i);
+});
+
+test("agent image tool respects agent gate when execution context is provided", async () => {
+  const tool = createAgentImageTool({
+    ensureReady: async () => {},
+    getConfig: () => ({
+      enabled: true,
+      provider: "inherit",
+      imageModel: "",
+    }),
+    getImageProvider: () => ({
+      async generate() {
+        throw new Error("should not generate");
+      },
+    }),
+    getMediaDir: () => "/tmp/openclaw-agent-images",
+    materializeMedia: async (value) => value,
+    isAgentAllowed: () => false,
+    logger: null,
+  });
+
+  const result = await tool.execute("call_3", { prompt: "anything" }, { agentId: "other" });
+  assert.match(result.content?.[0]?.text || "", /not enabled for this agent/i);
 });

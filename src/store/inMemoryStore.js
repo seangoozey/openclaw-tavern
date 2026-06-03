@@ -32,6 +32,7 @@ export class InMemoryStore {
     this.turns = new Map();
     this.summaries = new Map();
     this.turnEmbeddings = new Map();
+    this.companionSchedules = new Map();
   }
 
   nextAssetVersion(userId, type, name) {
@@ -404,6 +405,97 @@ export class InMemoryStore {
       preset: { ...presetAsset, detail: clone(this.presets.get(presetAsset.id) || {}) },
       lorebooks: lorebookAssets.map((asset) => ({ ...asset, detail: clone(this.lorebooks.get(asset.id) || {}) })),
     };
+  }
+
+  upsertCompanionSchedule(input = {}) {
+    const session = this.getSessionById(input.sessionId);
+    if (!session) {
+      throw new RPError(RP_ERROR_CODES.SESSION_NOT_FOUND, "Session not found");
+    }
+    const existing = this.companionSchedules.get(session.id) || {};
+    const now = nowIso();
+    const row = {
+      session_id: session.id,
+      enabled: input.enabled ?? existing.enabled ?? false,
+      channel_type: input.channelType ?? input.channel_type ?? existing.channel_type ?? session.channel_type,
+      platform_context_id:
+        input.platformContextId ?? input.platform_context_id ?? existing.platform_context_id ?? "",
+      channel_id: input.channelId ?? input.channel_id ?? existing.channel_id ?? "",
+      user_id: input.userId ?? input.user_id ?? existing.user_id ?? session.user_id,
+      chat_id: input.chatId ?? input.chat_id ?? existing.chat_id ?? null,
+      account_id: input.accountId ?? input.account_id ?? existing.account_id ?? null,
+      message_thread_id:
+        input.messageThreadId ?? input.message_thread_id ?? existing.message_thread_id ?? null,
+      mode: input.mode ?? existing.mode ?? "balanced",
+      reason: input.reason ?? existing.reason ?? null,
+      min_idle_minutes: input.minIdleMinutes ?? input.min_idle_minutes ?? existing.min_idle_minutes ?? 120,
+      min_interval_minutes:
+        input.minIntervalMinutes ?? input.min_interval_minutes ?? existing.min_interval_minutes ?? 240,
+      max_per_day: input.maxPerDay ?? input.max_per_day ?? existing.max_per_day ?? 3,
+      quiet_start: input.quietStart ?? input.quiet_start ?? existing.quiet_start ?? null,
+      quiet_end: input.quietEnd ?? input.quiet_end ?? existing.quiet_end ?? null,
+      timezone: input.timezone ?? existing.timezone ?? null,
+      last_sent_at: existing.last_sent_at ?? null,
+      next_eligible_at:
+        input.nextEligibleAt ?? input.next_eligible_at ?? existing.next_eligible_at ?? now,
+      sent_count: existing.sent_count ?? 0,
+      sent_count_date: existing.sent_count_date ?? null,
+      consecutive_sent: existing.consecutive_sent ?? 0,
+      failure_count: 0,
+      last_error: null,
+      created_at: existing.created_at ?? now,
+      updated_at: now,
+    };
+    this.companionSchedules.set(session.id, row);
+    return clone(row);
+  }
+
+  getCompanionSchedule(sessionId) {
+    const row = this.companionSchedules.get(sessionId);
+    return row ? clone(row) : null;
+  }
+
+  listDueCompanionSchedules(nowIsoValue, limit = 20) {
+    return [...this.companionSchedules.values()]
+      .filter((row) => {
+        const session = this.sessions.get(row.session_id);
+        return row.enabled && session?.status === RP_SESSION_STATUS.ACTIVE && (!row.next_eligible_at || row.next_eligible_at <= nowIsoValue);
+      })
+      .sort((a, b) => String(a.next_eligible_at || "").localeCompare(String(b.next_eligible_at || "")))
+      .slice(0, Number(limit) || 20)
+      .map(clone);
+  }
+
+  markCompanionScheduleSent({ sessionId, sentAt, nextEligibleAt, sentCountDate, sentCount }) {
+    const row = this.companionSchedules.get(sessionId);
+    if (!row) return null;
+    row.last_sent_at = sentAt;
+    row.next_eligible_at = nextEligibleAt;
+    row.sent_count_date = sentCountDate;
+    row.sent_count = Number(sentCount) || 0;
+    row.consecutive_sent = Number(row.consecutive_sent || 0) + 1;
+    row.failure_count = 0;
+    row.last_error = null;
+    row.updated_at = nowIso();
+    return clone(row);
+  }
+
+  markCompanionScheduleFailure({ sessionId, error, nextEligibleAt }) {
+    const row = this.companionSchedules.get(sessionId);
+    if (!row) return null;
+    row.failure_count = Number(row.failure_count || 0) + 1;
+    row.last_error = String(error || "").slice(0, 500);
+    row.next_eligible_at = nextEligibleAt;
+    row.updated_at = nowIso();
+    return clone(row);
+  }
+
+  resetCompanionConsecutiveCount(sessionId) {
+    const row = this.companionSchedules.get(sessionId);
+    if (!row) return false;
+    row.consecutive_sent = 0;
+    row.updated_at = nowIso();
+    return true;
   }
 
   upsertTurnEmbedding({ sessionId, turnIndex, role, content, language, vector, model }) {

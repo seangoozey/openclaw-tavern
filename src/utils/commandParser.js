@@ -11,7 +11,7 @@ function tokenize(raw) {
     if (quote) {
       if (ch === quote) {
         quote = null;
-      } else if (ch === "\\" && i + 1 < raw.length) {
+      } else if (ch === "\\" && i + 1 < raw.length && (raw[i + 1] === quote || raw[i + 1] === "\\")) {
         i += 1;
         cur += raw[i];
       } else {

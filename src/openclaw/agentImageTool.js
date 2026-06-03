@@ -29,6 +29,16 @@ export const openclawRpPluginConfigSchema = {
         },
       },
     },
+    allowedAgents: {
+      type: "array",
+      items: {
+        type: "string",
+        minLength: 1,
+      },
+      default: [],
+      description:
+        "Optional list of OpenClaw agent IDs allowed to use RP commands and hooks. Empty means all agents.",
+    },
   },
 };
 
@@ -54,12 +64,22 @@ export function normalizeAgentImageConfig(pluginConfig = {}) {
   };
 }
 
+export function normalizeAllowedAgentIds(pluginConfig = {}) {
+  const raw = Array.isArray(pluginConfig?.allowedAgents)
+    ? pluginConfig.allowedAgents
+    : Array.isArray(pluginConfig?.allowedAgentIds)
+      ? pluginConfig.allowedAgentIds
+      : [];
+  return [...new Set(raw.map((item) => asTrimmedString(item)).filter(Boolean))];
+}
+
 export function createAgentImageTool({
   ensureReady,
   getConfig,
   getImageProvider,
   getMediaDir,
   materializeMedia,
+  isAgentAllowed,
   logger,
 }) {
   return {
@@ -91,8 +111,18 @@ export function createAgentImageTool({
         },
       },
     },
-    async execute(_id, params) {
+    async execute(_id, params, ctx) {
       await ensureReady?.();
+      if (typeof isAgentAllowed === "function" && !isAgentAllowed(ctx)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Agent image generation is not enabled for this agent.",
+            },
+          ],
+        };
+      }
 
       const config = typeof getConfig === "function" ? getConfig() : { enabled: true, imageModel: "" };
       if (config?.enabled === false) {

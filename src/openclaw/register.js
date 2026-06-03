@@ -31,6 +31,7 @@ import {
   OPENCLAW_RP_PLUGIN_ID,
   createAgentImageTool,
   getOpenClawRpPluginConfig,
+  normalizeAllowedAgentIds,
   normalizeAgentImageConfig,
   openclawRpPluginConfigSchema,
 } from "./agentImageTool.js";
@@ -203,7 +204,58 @@ function buildCommandContext(ctx) {
     userId,
     content: String(ctx.commandBody || "/rp"),
     attachments: [],
+    accountId: ctx.accountId,
+    to: ctx.to,
+    from: ctx.from,
+    messageThreadId: ctx.messageThreadId,
   };
+}
+
+function extractAgentIdFromSessionKey(value) {
+  const raw = asString(value);
+  if (!raw) {
+    return "";
+  }
+  const parts = raw.split(":");
+  if (parts[0] === "agent" && parts[1]) {
+    return parts[1];
+  }
+  return "";
+}
+
+function collectAgentIdCandidates(...sources) {
+  const candidates = new Set();
+  for (const source of sources) {
+    if (!source) {
+      continue;
+    }
+    const direct = asString(source.agentId || source.agent_id || source.agent);
+    if (direct) {
+      candidates.add(direct);
+    }
+    const nested = asString(source.agent?.id || source.agent?.agentId || source.metadata?.agentId || source.metadata?.agent_id);
+    if (nested) {
+      candidates.add(nested);
+    }
+    const fromSession = extractAgentIdFromSessionKey(source.sessionKey || source.session_key);
+    if (fromSession) {
+      candidates.add(fromSession);
+    }
+  }
+  return candidates;
+}
+
+function isAllowedAgentContext(allowedAgentIds, ...sources) {
+  if (!Array.isArray(allowedAgentIds) || allowedAgentIds.length === 0) {
+    return true;
+  }
+  const allowed = new Set(allowedAgentIds);
+  for (const candidate of collectAgentIdCandidates(...sources)) {
+    if (allowed.has(candidate)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function createMediaCache() {
@@ -1149,41 +1201,64 @@ function normalizeMediaPath(value) {
   return asString(value);
 }
 
-function isValidPreprocessedEvent(event) {
-  return event && event.type === "message" && event.action === "preprocessed";
+function firstMediaValue(...values) {
+  for (const value of values) {
+    const normalized = normalizeMediaPath(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return "";
 }
 
 function storeEventMediaToCache(event, mediaCache) {
-  const mediaPath = normalizeMediaPath(event.context?.mediaPath);
+  const metadata = event?.metadata || {};
+  const context = event?.context || {};
+  const mediaPath = firstMediaValue(
+    context.mediaPath,
+    context.media_path,
+    metadata.mediaPath,
+    metadata.media_path,
+    metadata.filePath,
+    metadata.file_path,
+    metadata.localPath,
+    metadata.local_path,
+  );
   if (!mediaPath) {
     return;
   }
 
+  const channelId = asString(context.channelId || metadata.channelId || metadata.channel_id);
+  const from = asString(context.from || event?.from || metadata.from);
+  const to = asString(context.to || metadata.to || metadata.originatingTo);
+  const senderId = asString(context.senderId || metadata.senderId || metadata.sender_id);
+  const mediaType = normalizeMediaType(context.mediaType || context.media_type || metadata.mediaType || metadata.media_type);
+
   const cached = mediaCache.consume({
-    channelId: asString(event.context?.channelId),
-    from: asString(event.context?.from),
-    to: asString(event.context?.to),
-    senderId: asString(event.context?.senderId),
+    channelId,
+    from,
+    to,
+    senderId,
   });
   if (cached?.path === mediaPath) {
     mediaCache.remember({
-      channelId: asString(event.context?.channelId),
-      from: asString(event.context?.from),
-      to: asString(event.context?.to),
-      senderId: asString(event.context?.senderId),
+      channelId,
+      from,
+      to,
+      senderId,
       mediaPath,
-      mediaType: normalizeMediaType(event.context?.mediaType),
+      mediaType,
     });
     return;
   }
 
   mediaCache.remember({
-    channelId: asString(event.context?.channelId),
-    from: asString(event.context?.from),
-    to: asString(event.context?.to),
-    senderId: asString(event.context?.senderId),
+    channelId,
+    from,
+    to,
+    senderId,
     mediaPath,
-    mediaType: normalizeMediaType(event.context?.mediaType),
+    mediaType,
   });
 }
 
@@ -1277,6 +1352,180 @@ async function sendTelegramFollowup({ ctx, text, logger }) {
   }
 
   return chunks.length > 0;
+}
+
+function addMinutesIso(minutes, from = new Date()) {
+  return new Date(from.getTime() + Math.max(1, Number(minutes) || 1) * 60000).toISOString();
+}
+
+function scheduleDayKey(date = new Date(), timeZone) {
+  if (!timeZone) {
+    return date.toISOString().slice(0, 10);
+  }
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+}
+
+function minutesOfDay(date = new Date(), timeZone) {
+  if (!timeZone) {
+    return date.getHours() * 60 + date.getMinutes();
+  }
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(date);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return Number(values.hour) * 60 + Number(values.minute);
+  } catch {
+    return date.getHours() * 60 + date.getMinutes();
+  }
+}
+
+function parseClockMinutes(value) {
+  const match = String(value || "").match(/^(\d{2}):(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function isInQuietHours(schedule, date = new Date()) {
+  const start = parseClockMinutes(schedule?.quiet_start);
+  const end = parseClockMinutes(schedule?.quiet_end);
+  if (start === null || end === null || start === end) {
+    return false;
+  }
+  const now = minutesOfDay(date, schedule?.timezone);
+  if (start < end) {
+    return now >= start && now < end;
+  }
+  return now >= start || now < end;
+}
+
+async function sendTelegramScheduledCompanion({ telegramRuntime, schedule, text, logger }) {
+  const chatId = extractTelegramChatId(schedule.chat_id || schedule.platform_context_id);
+  if (!chatId || typeof telegramRuntime?.sendMessageTelegram !== "function") {
+    return false;
+  }
+  await sendTelegramFollowup({
+    ctx: {
+      channel: "telegram",
+      platformContextId: chatId,
+      accountId: schedule.account_id || undefined,
+      messageThreadId:
+        schedule.message_thread_id === null || schedule.message_thread_id === undefined
+          ? undefined
+          : Number(schedule.message_thread_id),
+      telegramRuntime,
+    },
+    text,
+    logger,
+  });
+  return true;
+}
+
+async function runCompanionSchedulerOnce({ store, router, telegramRuntime, logger, limit = 20 }) {
+  if (
+    !store ||
+    !router ||
+    typeof store.listDueCompanionSchedules !== "function" ||
+    typeof store.markCompanionScheduleSent !== "function" ||
+    typeof telegramRuntime?.sendMessageTelegram !== "function"
+  ) {
+    return { checked: 0, sent: 0 };
+  }
+
+  const now = new Date();
+  const due = store.listDueCompanionSchedules(now.toISOString(), limit);
+  let sent = 0;
+  for (const schedule of due) {
+    const dayKey = scheduleDayKey(now, schedule.timezone);
+    const sentToday = schedule.sent_count_date === dayKey ? Number(schedule.sent_count || 0) : 0;
+    const maxPerDay = Math.max(1, Number(schedule.max_per_day || 1));
+    const minInterval = Math.max(1, Number(schedule.min_interval_minutes || 240));
+    try {
+      if (isInQuietHours(schedule, now)) {
+        store.markCompanionScheduleFailure?.({
+          sessionId: schedule.session_id,
+          error: "quiet_hours",
+          nextEligibleAt: addMinutesIso(30, now),
+        });
+        continue;
+      }
+      if (sentToday >= maxPerDay) {
+        store.markCompanionScheduleFailure?.({
+          sessionId: schedule.session_id,
+          error: "daily_limit_reached",
+          nextEligibleAt: addMinutesIso(60, now),
+        });
+        continue;
+      }
+      if (Number(schedule.consecutive_sent || 0) >= 1) {
+        store.markCompanionScheduleFailure?.({
+          sessionId: schedule.session_id,
+          error: "waiting_for_user_reply",
+          nextEligibleAt: addMinutesIso(minInterval, now),
+        });
+        continue;
+      }
+
+      const response = await router.handleCompanionTick({
+        session_id: schedule.session_id,
+        user_id: schedule.user_id,
+        reason: schedule.reason || "scheduled companion heartbeat",
+        mode: schedule.mode || "balanced",
+        idle_minutes: Number(schedule.min_idle_minutes || 120),
+      });
+      const text = response?.data?.content || response?.data?.text || "";
+      if (!response?.ok || !text) {
+        store.markCompanionScheduleFailure?.({
+          sessionId: schedule.session_id,
+          error: response?.data?.reason || response?.message || "companion_tick_ignored",
+          nextEligibleAt: addMinutesIso(30, now),
+        });
+        continue;
+      }
+
+      const delivered = await sendTelegramScheduledCompanion({
+        telegramRuntime,
+        schedule,
+        text,
+        logger,
+      });
+      if (!delivered) {
+        throw new Error("telegram delivery unavailable");
+      }
+      store.markCompanionScheduleSent({
+        sessionId: schedule.session_id,
+        sentAt: now.toISOString(),
+        nextEligibleAt: addMinutesIso(minInterval, now),
+        sentCountDate: dayKey,
+        sentCount: sentToday + 1,
+      });
+      sent += 1;
+    } catch (err) {
+      logger?.warn?.(`[openclaw-rp] companion scheduler failed: ${String(err?.message || err)}`);
+      store.markCompanionScheduleFailure?.({
+        sessionId: schedule.session_id,
+        error: String(err?.message || err),
+        nextEligibleAt: addMinutesIso(60, now),
+      });
+    }
+  }
+  return { checked: due.length, sent };
 }
 
 function scheduleFollowupIfNeeded(response, ctx, logger, telegramRuntime) {
@@ -1808,6 +2057,8 @@ export default {
     const usedFallbackPaths = new Set();
     const pendingInboundByKey = new Map();
     const pendingInboundTtlMs = 120000;
+    let companionSchedulerTimer = null;
+    let companionSchedulerRunning = false;
     // Track active RP prompt context by both agent sessionKey and channelId because
     // OpenClaw agent hooks do not consistently provide channelId.
     const activeRpContextByAgentSessionKey = new Map();
@@ -1818,6 +2069,13 @@ export default {
     // rpContext maps have been cleaned up.
     const recentlyEndedRpChannels = new Map(); // key → { at, sessionId }
     const recentlyEndedTtlMs = 300000; // 5 min
+
+    function isRpAgentAllowed(...sources) {
+      return isAllowedAgentContext(
+        normalizeAllowedAgentIds(getOpenClawRpPluginConfig(api?.config)),
+        ...sources,
+      );
+    }
 
     function getCurrentAgentImageConfig() {
       return {
@@ -1939,6 +2197,7 @@ export default {
           getImageProvider: () => agentImageProviders?.imageProvider || null,
           getMediaDir: () => generatedMediaDir || inboundMediaDir,
           materializeMedia: materializeMediaUrl,
+          isAgentAllowed: (ctx) => isRpAgentAllowed(ctx),
           logger: api.logger,
         }),
       );
@@ -1951,6 +2210,12 @@ export default {
       description: "RolePlay commands. Try /rp help",
       acceptsArgs: true,
       handler: async (ctx) => {
+        if (!isRpAgentAllowed(ctx)) {
+          return {
+            text: "RP plugin is not enabled for this agent.",
+            isError: true,
+          };
+        }
         await ensureInitialized();
         try {
           const commandBody = String(ctx.commandBody || "/rp");
@@ -2030,16 +2295,25 @@ export default {
       },
     });
 
-    api.registerHook("message:preprocessed", (event) => {
-      if (!isValidPreprocessedEvent(event)) {
-        return;
-      }
-      storeEventMediaToCache(event, mediaCache);
-    });
-
     api.on("message_received", async (event, hookCtx) => {
       try {
+        if (!isRpAgentAllowed(event, hookCtx)) {
+          return;
+        }
         await ensureInitialized();
+        storeEventMediaToCache(
+          {
+            ...event,
+            context: {
+              ...(event?.context || {}),
+              channelId: hookCtx?.channelId,
+              from: event?.from,
+              to: event?.metadata?.to || event?.metadata?.originatingTo || hookCtx?.conversationId,
+              senderId: event?.metadata?.senderId || hookCtx?.senderId,
+            },
+          },
+          mediaCache,
+        );
         const content = asString(event?.content);
         if (!content || content.startsWith("/")) {
           return;
@@ -2111,6 +2385,7 @@ export default {
           content,
           tokenEstimate: estimateTokens(content),
         });
+        store.resetCompanionConsecutiveCount?.(session.id);
         sessionManager?.indexTurnEmbeddingAsync?.(session.id, userTurn);
 
         // Store RP context for before_prompt_build to pick up
@@ -2150,6 +2425,9 @@ export default {
     // Inject RP character prompt when an active RP session exists
     api.on("before_prompt_build", async (event, ctx) => {
       try {
+        if (!isRpAgentAllowed(event, ctx)) {
+          return;
+        }
         await ensureInitialized();
         const debugChannelKey = [
           asString(ctx?.channelId),
@@ -2240,6 +2518,9 @@ export default {
     // Capture LLM output and append as assistant turn in the RP session
     api.on("llm_output", async (event, ctx) => {
       try {
+        if (!isRpAgentAllowed(event, ctx)) {
+          return;
+        }
         await ensureInitialized();
         const rpCtx = findRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, ctx);
         if (!rpCtx) {
@@ -2333,6 +2614,7 @@ export default {
     // Note: before_message_write MUST be synchronous (no async/await).
     api.on("before_message_write", (event, ctx) => {
       try {
+        if (!isRpAgentAllowed(event, ctx)) return;
         if (!initialized) return;
         const rpCtx = findRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, ctx);
         if (!rpCtx) return;
@@ -2348,8 +2630,37 @@ export default {
 
     api.registerService({
       id: "openclaw-rp-sqlite",
-      start: () => { },
+      start: () => {
+        if (companionSchedulerTimer) {
+          return;
+        }
+        const tick = async () => {
+          if (companionSchedulerRunning) {
+            return;
+          }
+          companionSchedulerRunning = true;
+          try {
+            await ensureInitialized();
+            await runCompanionSchedulerOnce({
+              store,
+              router,
+              telegramRuntime: api.runtime.channel?.telegram,
+              logger: api.logger,
+            });
+          } catch (err) {
+            api.logger?.warn?.(`[openclaw-rp] companion scheduler tick failed: ${String(err?.message || err)}`);
+          } finally {
+            companionSchedulerRunning = false;
+          }
+        };
+        companionSchedulerTimer = setInterval(tick, 10 * 60 * 1000);
+        void tick();
+      },
       stop: () => {
+        if (companionSchedulerTimer) {
+          clearInterval(companionSchedulerTimer);
+          companionSchedulerTimer = null;
+        }
         try {
           db?.close?.();
         } catch {

@@ -6,6 +6,10 @@ export function normalizeMessageContext(raw = {}) {
     userId: raw.userId || raw.user_id,
     content: raw.content || "",
     attachments: raw.attachments || [],
+    accountId: raw.accountId || raw.account_id,
+    to: raw.to,
+    from: raw.from,
+    messageThreadId: raw.messageThreadId || raw.message_thread_id,
   };
 }
 
