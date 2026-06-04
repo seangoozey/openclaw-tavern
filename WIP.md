@@ -31,7 +31,7 @@ The basic loop should feel good first: short texts, real time, occasional unavai
 
 ## Current Status
 
-- Character Card V2 import works for common fields.
+- Character Card V2 and V3 import works for common fields.
 - `openclaw/texting_persona` extension exists under `data.extensions`.
 - Runtime state is persisted per session in plugin storage.
 - Prompt injection includes live texting state.
@@ -203,7 +203,7 @@ Add deterministic tests for:
 
 Status: not started.
 
-Improve full Character Card V2 support by importing `character_book` into lorebook or prompt context.
+Improve full Character Card V2/V3 support by importing `character_book` into lorebook or prompt context.
 
 ### 10. Docker Smoke Test
 

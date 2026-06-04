@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`openclaw/texting_persona` is an OpenClaw-specific Character Card V2 extension for persistent real-time texting characters.
+`openclaw/texting_persona` is an OpenClaw-specific Character Card extension for persistent real-time texting characters. It is currently supported on Character Card V2 and V3 JSON/PNG imports.
 
 The extension stores static simulator configuration inside the card. It does not store live session state. Runtime values such as current mood, trust, activity, last message time, or pending delayed replies belong in plugin storage.
 
@@ -10,14 +10,15 @@ Use this extension when a card should behave like a person texting from their ow
 
 ## Location
 
-The extension must live under Character Card V2 `data.extensions`:
+The extension must live under `data.extensions`, which is shared by Character Card V2 and V3:
 
 ```json
 {
-  "spec": "chara_card_v2",
-  "spec_version": "2.0",
+  "spec": "chara_card_v3",
+  "spec_version": "3.0",
   "data": {
     "name": "Example Character",
+    "group_only_greetings": [],
     "extensions": {
       "openclaw/texting_persona": {
         "version": "1.0",
@@ -30,7 +31,9 @@ The extension must live under Character Card V2 `data.extensions`:
 
 ## Compatibility
 
-- Cards without this extension must continue to behave as ordinary Character Card V2 cards.
+- Cards without this extension must continue to behave as ordinary Character Card V2 or V3 cards.
+- V3 cards should use `spec: "chara_card_v3"`, `spec_version: "3.0"`, and include required V3 data fields such as `group_only_greetings`.
+- V3 PNG cards use the `ccv3` tEXt chunk. If a PNG contains both `ccv3` and legacy `chara`, the plugin should prefer `ccv3`.
 - Unknown fields inside the extension should be preserved when possible and ignored by runtimes that do not understand them.
 - New extension versions should remain backward compatible where practical.
 - Static card defaults may be copied into session state at session start, but live state updates must not mutate the original card.

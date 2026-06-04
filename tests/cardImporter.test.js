@@ -2,6 +2,25 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { importCardFromAttachment } from "../src/importers/cardImporter.js";
 
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+function pngTextChunk(keyword, value) {
+  const data = Buffer.concat([Buffer.from(keyword, "utf8"), Buffer.from([0]), Buffer.from(value, "utf8")]);
+  const header = Buffer.alloc(8);
+  header.writeUInt32BE(data.length, 0);
+  header.write("tEXt", 4, 4, "ascii");
+  return Buffer.concat([header, data, Buffer.alloc(4)]);
+}
+
+function pngWithTextChunks(chunks) {
+  const iend = Buffer.from([0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0, 0, 0, 0]);
+  return Buffer.concat([PNG_SIGNATURE, ...chunks, iend]);
+}
+
+function encodeCardChunk(card) {
+  return Buffer.from(JSON.stringify(card), "utf8").toString("base64");
+}
+
 test("import V1 card JSON", () => {
   const raw = {
     name: "Alice",
@@ -38,6 +57,83 @@ test("import V2 card JSON", () => {
   assert.equal(res.sourceFormat, "chara_card_v2");
   assert.equal(res.card.name, "Bob");
   assert.equal(res.card.system_prompt, "stay in character");
+});
+
+test("import V3 card JSON", () => {
+  const raw = {
+    spec: "chara_card_v3",
+    spec_version: "3.0",
+    data: {
+      name: "Vera",
+      system_prompt: "stay in character",
+      group_only_greetings: [],
+      extensions: {
+        "openclaw/texting_persona": {
+          enabled: true,
+        },
+      },
+    },
+  };
+
+  const res = importCardFromAttachment({
+    filename: "vera.json",
+    buffer: Buffer.from(JSON.stringify(raw), "utf8"),
+  });
+
+  assert.equal(res.sourceFormat, "chara_card_v3");
+  assert.equal(res.card.name, "Vera");
+  assert.equal(res.card.system_prompt, "stay in character");
+  assert.equal(res.extra.data_extensions["openclaw/texting_persona"].enabled, true);
+});
+
+test("import extensionless V3 card JSON", () => {
+  const raw = {
+    spec: "chara_card_v3",
+    spec_version: "3.0",
+    data: {
+      name: "No Extension",
+      group_only_greetings: [],
+    },
+  };
+
+  const res = importCardFromAttachment({
+    filename: "NoExtensionCard",
+    buffer: Buffer.from(JSON.stringify(raw), "utf8"),
+  });
+
+  assert.equal(res.sourceFormat, "chara_card_v3");
+  assert.equal(res.card.name, "No Extension");
+});
+
+test("import PNG prefers V3 ccv3 chunk over V2 chara chunk", () => {
+  const v2 = {
+    spec: "chara_card_v2",
+    spec_version: "2.0",
+    data: {
+      name: "Old",
+    },
+  };
+  const v3 = {
+    spec: "chara_card_v3",
+    spec_version: "3.0",
+    data: {
+      name: "New",
+      group_only_greetings: [],
+    },
+  };
+
+  const buffer = pngWithTextChunks([
+    pngTextChunk("chara", encodeCardChunk(v2)),
+    pngTextChunk("ccv3", encodeCardChunk(v3)),
+  ]);
+
+  const res = importCardFromAttachment({
+    filename: "new.png",
+    buffer,
+  });
+
+  assert.equal(res.sourceFormat, "chara_card_v3");
+  assert.equal(res.card.name, "New");
 });
 
 test("import extensionless V2 card JSON with OpenClaw texting persona extension", () => {

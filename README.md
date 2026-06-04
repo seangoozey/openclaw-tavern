@@ -17,7 +17,7 @@ OpenClaw RP Plugin is a roleplay-focused OpenClaw plugin with first-class SillyT
 ### 1. SillyTavern-Compatible Imports
 
 - Character cards: `PNG (tEXt/chara)` and `JSON`
-- Card versions: V1 and V2 supported, with unmapped fields preserved
+- Card versions: V1, V2, and V3 supported, with unmapped fields preserved
 - Preset import: SillyTavern JSON mapping
 - Lorebook import: ST world/lorebook JSON mapping
 - Import inputs:

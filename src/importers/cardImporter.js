@@ -1,6 +1,6 @@
 import { RPError } from "../errors.js";
 import { RP_ERROR_CODES } from "../types.js";
-import { extractCharaJsonFromPng } from "../utils/png.js";
+import { extractCharacterCardJsonFromPng } from "../utils/png.js";
 
 function firstDefined(...values) {
   for (const v of values) {
@@ -32,11 +32,20 @@ function parseJsonBuffer(buffer) {
 function detectCardVersion(raw) {
   const spec = raw?.spec;
   const specVersion = Number.parseFloat(raw?.spec_version || raw?.data?.spec_version || "0");
-  if (spec === "chara_card_v2" || specVersion >= 2) {
+  if (spec === "chara_card_v3") {
+    return "chara_card_v3";
+  }
+  if (spec === "chara_card_v2") {
     return "chara_card_v2";
   }
-  if (spec && spec !== "chara_card_v2") {
+  if (spec) {
     return "unknown";
+  }
+  if (specVersion >= 3) {
+    return "chara_card_v3";
+  }
+  if (specVersion >= 2) {
+    return "chara_card_v2";
   }
 
   const root = raw?.data || raw || {};
@@ -61,7 +70,7 @@ function detectCardVersion(raw) {
 
 function mapCard(raw) {
   const sourceFormat = detectCardVersion(raw);
-  const root = sourceFormat === "chara_card_v2" ? raw?.data || {} : raw?.data || raw || {};
+  const root = sourceFormat === "chara_card_v2" || sourceFormat === "chara_card_v3" ? raw?.data || {} : raw?.data || raw || {};
 
   const name = firstDefined(root.name, raw?.name, root.char_name, raw?.char_name);
   if (!name) {
@@ -151,7 +160,7 @@ export function importCardFromAttachment(attachment) {
   const trimmedStart = attachment.buffer.toString("utf8", 0, Math.min(32, attachment.buffer.length)).trimStart();
 
   if (lower.endsWith(".png")) {
-    raw = extractCharaJsonFromPng(attachment.buffer);
+    raw = extractCharacterCardJsonFromPng(attachment.buffer);
   } else if (lower.endsWith(".json") || trimmedStart.startsWith("{")) {
     raw = parseJsonBuffer(attachment.buffer);
   } else {

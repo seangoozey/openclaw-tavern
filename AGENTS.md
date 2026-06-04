@@ -20,12 +20,12 @@ Practical implications:
 ## Current Core Capabilities
 
 - Imports character cards, presets, and lorebooks.
-- Supports Character Card Spec V2 import for common fields.
+- Supports Character Card Spec V2 and V3 import for common fields.
 - Stores sessions, turns, summaries, long-memory embeddings, and companion schedules.
 - Provides `/rp` commands through OpenClaw.
 - Supports proactive companion nudges and Telegram auto outreach.
 - Supports TTS, image, video, and native OpenClaw agent-image helpers.
-- Has a texting-persona extension path for V2 cards via `data.extensions["openclaw/texting_persona"]`.
+- Has a texting-persona extension path for V2/V3 cards via `data.extensions["openclaw/texting_persona"]`.
 
 ## Texting Persona Goal
 
@@ -66,16 +66,17 @@ The basic experience should be validated first: short texts, real time, occasion
 
 ## Character Card Strategy
 
-Keep standard Character Card V2 compatibility. Do not invent a conflicting top-level card format unless there is no alternative.
+Keep standard Character Card V2 and V3 compatibility. Do not invent a conflicting top-level card format unless there is no alternative.
 
-Use V2 `data.extensions` for OpenClaw-specific simulator metadata:
+Use `data.extensions` for OpenClaw-specific simulator metadata. Character Card V3 uses the same extension location:
 
 ```json
 {
-  "spec": "chara_card_v2",
-  "spec_version": "2.0",
+  "spec": "chara_card_v3",
+  "spec_version": "3.0",
   "data": {
     "name": "Sarah Miller",
+    "group_only_greetings": [],
     "description": "...",
     "extensions": {
       "openclaw/texting_persona": {
@@ -115,7 +116,7 @@ The schema reference for the texting persona extension is `docs/TEXTING_PERSONA_
 
 The current implementation is an MVP:
 
-- Reads `openclaw/texting_persona` from V2 card extensions.
+- Reads `openclaw/texting_persona` from V2/V3 card extensions.
 - Persists per-session runtime state in `rp_session_states`.
 - Persists delayed texting replies in `rp_delayed_messages`.
 - Updates state on session start, user turns, assistant turns, retries, OpenClaw native hooks, and proactive nudges.
@@ -145,12 +146,12 @@ Recommended follow-up pieces:
 - Add `/rp state` or `/rp texting-state` for debugging runtime state.
 - Add state decay over time.
 - Add structured event classification for boundary crossing, pressure, flirtation, vulnerability, and identifying-info requests.
-- Improve V2 `character_book` import support.
+- Improve V2/V3 `character_book` import support.
 - Keep premise and boundary guards lightweight and card-driven. Their purpose is preventing fictional premise breaks and hallucinated identifying details, not treating the character as a real private person.
 
 ## Engineering Constraints
 
-- Preserve ordinary V2 card behavior for cards without `openclaw/texting_persona`.
+- Preserve ordinary V2/V3 card behavior for cards without `openclaw/texting_persona`.
 - Keep OpenClaw-specific simulator data namespaced under `data.extensions`.
 - Persist live state in plugin storage, not in the card.
 - Keep character-domain details in the card extension. The runtime should not hardcode school, dorm, office, shift-work, or other life-specific assumptions. Use generic schedule/state fields such as `weekly_schedule[].state` and card-authored fallback guidance.
