@@ -97,6 +97,8 @@ Cards in `card-makefiles/` are local drafting artifacts and are intentionally gi
 
 The schema reference for the texting persona extension is `docs/TEXTING_PERSONA_EXTENSION.md`. Keep that document updated whenever the extension shape, defaults, runtime responsibilities, or supported fields change.
 
+When exporting V3 PNG cards for OpenClaw compatibility testing, embed the card JSON in the standard `ccv3` tEXt chunk and also in legacy `chara` if the target container may still be running an older plugin build. Current importer code prefers `ccv3`.
+
 ## Important Files
 
 - `src/openclaw/register.js`: Native OpenClaw integration, command registration, hooks, Telegram scheduler.

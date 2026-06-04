@@ -1,7 +1,7 @@
 ---
 name: OpenClaw RP Plugin
 description: SillyTavern-compatible roleplay plugin with character cards, long memory, multimodal output (TTS/image), and Generative-Agents-style companion.
-version: 0.1.0
+version: 0.2.0
 homepage: https://github.com/garfeildma/openclaw-tavern
 user-invocable: true
 metadata: {"requires":{"env":["OPENCLAW_RP_LOCALE"],"bins":[],"install":[{"cmd":"npm install","when":"after-clone"}]}}

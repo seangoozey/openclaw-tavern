@@ -34,6 +34,7 @@ The extension must live under `data.extensions`, which is shared by Character Ca
 - Cards without this extension must continue to behave as ordinary Character Card V2 or V3 cards.
 - V3 cards should use `spec: "chara_card_v3"`, `spec_version: "3.0"`, and include required V3 data fields such as `group_only_greetings`.
 - V3 PNG cards use the `ccv3` tEXt chunk. If a PNG contains both `ccv3` and legacy `chara`, the plugin should prefer `ccv3`.
+- For compatibility with older OpenClaw/plugin installs that only look for `chara`, local v3 PNG exports may embed the same v3 JSON in both `ccv3` and `chara`.
 - Unknown fields inside the extension should be preserved when possible and ignored by runtimes that do not understand them.
 - New extension versions should remain backward compatible where practical.
 - Static card defaults may be copied into session state at session start, but live state updates must not mutate the original card.
