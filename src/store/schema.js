@@ -92,6 +92,16 @@ CREATE TABLE IF NOT EXISTS rp_turns (
 
 CREATE INDEX IF NOT EXISTS idx_turns_session ON rp_turns(session_id, turn_index);
 
+CREATE TABLE IF NOT EXISTS rp_session_states (
+  session_id TEXT PRIMARY KEY REFERENCES rp_sessions(id) ON DELETE CASCADE,
+  state_json TEXT NOT NULL,
+  last_evaluated_at DATETIME,
+  last_user_message_at DATETIME,
+  last_assistant_message_at DATETIME,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS rp_summaries (
   session_id TEXT NOT NULL REFERENCES rp_sessions(id) ON DELETE CASCADE,
   version INTEGER NOT NULL,
@@ -149,4 +159,22 @@ CREATE TABLE IF NOT EXISTS rp_companion_schedules (
 
 CREATE INDEX IF NOT EXISTS idx_companion_schedules_due
   ON rp_companion_schedules(enabled, next_eligible_at);
+
+CREATE TABLE IF NOT EXISTS rp_delayed_messages (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES rp_sessions(id) ON DELETE CASCADE,
+  reason TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  due_at DATETIME NOT NULL,
+  not_before_at DATETIME,
+  payload_json TEXT NOT NULL,
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  sent_at DATETIME,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_delayed_messages_due
+  ON rp_delayed_messages(status, due_at);
 `;

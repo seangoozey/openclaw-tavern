@@ -37,6 +37,7 @@ import {
 } from "./agentImageTool.js";
 import { deliverAutoImageForTelegram, deliverAutoSpeakForTelegram, deliverAutoVideoForTelegram } from "./autoImage.js";
 import { buildChannelSessionKey } from "../utils/sessionKey.js";
+import { getTextingPersonaConfig, normalizeTextingPersonaOutput } from "../core/textingPersona.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -1376,6 +1377,155 @@ function scheduleDayKey(date = new Date(), timeZone) {
   }
 }
 
+function cleanupPendingOutboundRewrites(pendingByKey, ttlMs) {
+  const now = Date.now();
+  for (const [key, value] of pendingByKey.entries()) {
+    if (!value?.at || now - value.at > ttlMs) {
+      pendingByKey.delete(key);
+    }
+  }
+}
+
+function collectOutboundRewriteKeys(event, ctx, rpCtx) {
+  const keys = new Set();
+  for (const value of [
+    ctx?.runId,
+    event?.runId,
+    event?.message?.runId,
+    event?.payload?.runId,
+  ]) {
+    const raw = asString(value);
+    if (raw) keys.add(`run:${raw}`);
+  }
+  for (const value of [
+    ctx?.messageId,
+    event?.messageId,
+    event?.message?.id,
+    event?.payload?.messageId,
+    event?.payload?.id,
+  ]) {
+    const raw = asString(value);
+    if (raw) keys.add(`message:${raw}`);
+  }
+  for (const value of [ctx?.sessionKey, event?.sessionKey, event?.message?.sessionKey]) {
+    const raw = asString(value);
+    if (raw) keys.add(`session:${raw}`);
+  }
+  for (const value of [
+    rpCtx?.channelKey,
+    [ctx?.channelId, ctx?.conversationId].filter(Boolean).join(":").toLowerCase(),
+    [ctx?.messageProvider || ctx?.channelId, ctx?.conversationId].filter(Boolean).join(":").toLowerCase(),
+  ]) {
+    const raw = asString(value).toLowerCase();
+    if (raw) keys.add(`channel:${raw}`);
+  }
+  return [...keys];
+}
+
+function rememberPendingOutboundRewrite(pendingByKey, ttlMs, payload) {
+  cleanupPendingOutboundRewrites(pendingByKey, ttlMs);
+  const keys = payload?.keys || [];
+  for (const key of keys) {
+    pendingByKey.set(key, payload);
+  }
+}
+
+function findPendingOutboundRewrite(pendingByKey, ttlMs, event, ctx) {
+  cleanupPendingOutboundRewrites(pendingByKey, ttlMs);
+  const keys = collectOutboundRewriteKeys(event, ctx);
+  for (const key of keys) {
+    const item = pendingByKey.get(key);
+    if (item) {
+      return item;
+    }
+  }
+  return null;
+}
+
+function dropPendingOutboundRewrite(pendingByKey, found) {
+  if (!found) {
+    return;
+  }
+  for (const [key, value] of pendingByKey.entries()) {
+    if (value === found) {
+      pendingByKey.delete(key);
+    }
+  }
+}
+
+function extractOutboundContent(event = {}) {
+  for (const value of [
+    event.content,
+    event.text,
+    event.message?.content,
+    event.message?.text,
+    event.payload?.content,
+    event.payload?.text,
+    event.payload?.message?.content,
+    event.payload?.message?.text,
+  ]) {
+    const raw = typeof value === "string" ? value : "";
+    if (raw) {
+      return raw;
+    }
+  }
+  return "";
+}
+
+function rewriteReplyPayloadContent(value, normalizedText) {
+  if (!value || typeof value !== "object" || !normalizedText) {
+    return null;
+  }
+  const next = { ...value };
+  let changed = false;
+  if (typeof next.content === "string" && next.content) {
+    next.content = normalizedText;
+    changed = true;
+  }
+  if (typeof next.text === "string" && next.text) {
+    next.text = normalizedText;
+    changed = true;
+  }
+  if (next.message && typeof next.message === "object") {
+    const message = { ...next.message };
+    if (typeof message.content === "string" && message.content) {
+      message.content = normalizedText;
+      changed = true;
+    }
+    if (typeof message.text === "string" && message.text) {
+      message.text = normalizedText;
+      changed = true;
+    }
+    next.message = message;
+  }
+  return changed ? next : null;
+}
+
+function getTextingPersonaForSession(store, sessionId) {
+  if (!store || !sessionId) {
+    return null;
+  }
+  const bundle = store.getSessionAssetBundle(sessionId);
+  const config = getTextingPersonaConfig(bundle.card);
+  if (!config) {
+    return null;
+  }
+  return {
+    config,
+    charName: bundle.card?.detail?.name || bundle.card?.name || "Character",
+  };
+}
+
+function registerOptionalHook(api, name, handler) {
+  try {
+    api.on(name, handler);
+    return true;
+  } catch (err) {
+    api.logger?.warn?.(`[openclaw-rp] optional hook ${name} unavailable: ${String(err?.message || err)}`);
+    return false;
+  }
+}
+
 function minutesOfDay(date = new Date(), timeZone) {
   if (!timeZone) {
     return date.getHours() * 60 + date.getMinutes();
@@ -1435,6 +1585,126 @@ async function sendTelegramScheduledCompanion({ telegramRuntime, schedule, text,
     logger,
   });
   return true;
+}
+
+function parseChannelSessionKey(value) {
+  const parts = String(value || "").split(":");
+  return {
+    channelType: parts[0] || "",
+    platformContextId: parts[1] || "",
+    channelId: parts[2] || "",
+    userId: parts.slice(3).join(":") || "",
+  };
+}
+
+function parseDelayedPayload(raw) {
+  try {
+    const parsed = JSON.parse(raw || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function sendTelegramDelayedMessage({ telegramRuntime, session, delayedMessage, text, logger }) {
+  const payload = parseDelayedPayload(delayedMessage?.payload_json);
+  const parsedKey = parseChannelSessionKey(session?.channel_session_key);
+  const chatId = extractTelegramChatId(
+    payload.chat_id ||
+      payload.platform_context_id ||
+      payload.channel_id ||
+      parsedKey.platformContextId ||
+      parsedKey.channelId,
+  );
+  if (!chatId || typeof telegramRuntime?.sendMessageTelegram !== "function") {
+    return false;
+  }
+  await sendTelegramFollowup({
+    ctx: {
+      channel: "telegram",
+      platformContextId: chatId,
+      accountId: payload.account_id || undefined,
+      messageThreadId:
+        payload.message_thread_id === null || payload.message_thread_id === undefined
+          ? undefined
+          : Number(payload.message_thread_id),
+      telegramRuntime,
+    },
+    text,
+    logger,
+  });
+  return true;
+}
+
+async function runDelayedMessageSchedulerOnce({ store, sessionManager, telegramRuntime, logger, limit = 20 }) {
+  if (
+    !store ||
+    !sessionManager ||
+    typeof store.listDueDelayedMessages !== "function" ||
+    typeof store.markDelayedMessageSent !== "function" ||
+    typeof telegramRuntime?.sendMessageTelegram !== "function"
+  ) {
+    return { checked: 0, sent: 0 };
+  }
+
+  const now = new Date();
+  const due = store.listDueDelayedMessages(now.toISOString(), limit);
+  let sent = 0;
+  for (const delayedMessage of due) {
+    try {
+      const session = store.getSessionById(delayedMessage.session_id);
+      if (!session || session.status !== "active") {
+        store.markDelayedMessageFailure?.({
+          id: delayedMessage.id,
+          error: "session_not_active",
+          nextDueAt: addMinutesIso(60, now),
+        });
+        continue;
+      }
+      if (session.channel_type !== "telegram") {
+        store.markDelayedMessageFailure?.({
+          id: delayedMessage.id,
+          error: "delayed_delivery_only_supports_telegram",
+          nextDueAt: addMinutesIso(60, now),
+        });
+        continue;
+      }
+      const generated = await sessionManager.generateDelayedTextingMessage(delayedMessage);
+      const text = generated?.text || "";
+      if (!text) {
+        store.markDelayedMessageFailure?.({
+          id: delayedMessage.id,
+          error: "empty_delayed_text",
+          nextDueAt: addMinutesIso(30, now),
+        });
+        continue;
+      }
+      const delivered = await sendTelegramDelayedMessage({
+        telegramRuntime,
+        session,
+        delayedMessage,
+        text,
+        logger,
+      });
+      if (!delivered) {
+        throw new Error("telegram delivery unavailable");
+      }
+      store.markDelayedMessageSent({
+        id: delayedMessage.id,
+        sentAt: now.toISOString(),
+      });
+      store.resetCompanionConsecutiveCount?.(session.id);
+      sent += 1;
+    } catch (err) {
+      logger?.warn?.(`[openclaw-rp] delayed message scheduler failed: ${String(err?.message || err)}`);
+      store.markDelayedMessageFailure?.({
+        id: delayedMessage.id,
+        error: String(err?.message || err),
+        nextDueAt: addMinutesIso(60, now),
+      });
+    }
+  }
+  return { checked: due.length, sent };
 }
 
 async function runCompanionSchedulerOnce({ store, router, telegramRuntime, logger, limit = 20 }) {
@@ -2063,7 +2333,9 @@ export default {
     // OpenClaw agent hooks do not consistently provide channelId.
     const activeRpContextByAgentSessionKey = new Map();
     const activeRpContextByChannel = new Map();
+    const pendingOutboundTextingRewrites = new Map();
     const rpContextTtlMs = 120000;
+    const outboundRewriteTtlMs = 120000;
     // Track channels where an RP session recently ended so that
     // before_prompt_build can inject a context-break even after the
     // rpContext maps have been cleaned up.
@@ -2385,6 +2657,10 @@ export default {
           content,
           tokenEstimate: estimateTokens(content),
         });
+        sessionManager?.updateTextingPersonaState?.(session.id, {
+          type: "user_turn",
+          content,
+        });
         store.resetCompanionConsecutiveCount?.(session.id);
         sessionManager?.indexTurnEmbeddingAsync?.(session.id, userTurn);
 
@@ -2537,14 +2813,36 @@ export default {
           return;
         }
 
-        // Consume the RP context only after capturing a valid assistant reply.
-        deleteRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, rpCtx);
+        let storedText = lastText;
+        try {
+          const textingPersona = getTextingPersonaForSession(store, session.id);
+          if (textingPersona) {
+            const normalized = normalizeTextingPersonaOutput(lastText, textingPersona.config, {
+              charName: textingPersona.charName,
+            });
+            if (normalized) {
+              storedText = normalized;
+              rememberPendingOutboundRewrite(pendingOutboundTextingRewrites, outboundRewriteTtlMs, {
+                at: Date.now(),
+                sessionId: session.id,
+                content: normalized,
+                keys: collectOutboundRewriteKeys(event, ctx, rpCtx),
+              });
+            }
+          }
+        } catch (err) {
+          api.logger?.warn?.(`[openclaw-rp] llm_output texting normalization failed: ${String(err?.message || err)}`);
+        }
 
         const assistantTurn = store.appendTurn({
           sessionId: session.id,
           role: "assistant",
-          content: lastText,
-          tokenEstimate: estimateTokens(lastText),
+          content: storedText,
+          tokenEstimate: estimateTokens(storedText),
+        });
+        sessionManager?.updateTextingPersonaState?.(session.id, {
+          type: "assistant_turn",
+          content: storedText,
         });
         sessionManager?.indexTurnEmbeddingAsync?.(session.id, assistantTurn);
 
@@ -2602,9 +2900,104 @@ export default {
           })();
         }
 
-        api.logger?.info?.(`[openclaw-rp] llm_output: appended assistant turn to session ${session.id}, length=${lastText.length}`);
+        // Keep rpCtx until delivery/write hooks have a chance to correlate this turn.
+        api.logger?.info?.(`[openclaw-rp] llm_output: appended assistant turn to session ${session.id}, length=${storedText.length}`);
       } catch (err) {
         api.logger?.warn?.(`[openclaw-rp] llm_output hook failed: ${String(err?.message || err)}`);
+      }
+    });
+
+    registerOptionalHook(api, "message_sending", async (event, ctx) => {
+      try {
+        if (!isRpAgentAllowed(event, ctx)) {
+          return;
+        }
+        await ensureInitialized();
+        const pending = findPendingOutboundRewrite(pendingOutboundTextingRewrites, outboundRewriteTtlMs, event, ctx);
+        const rawContent = extractOutboundContent(event);
+        let normalized = pending?.content || "";
+
+        if (!normalized) {
+          const rpCtx = findRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, ctx);
+          const sessionId = rpCtx?.session?.id;
+          if (!sessionId || !rawContent) {
+            return;
+          }
+          const textingPersona = getTextingPersonaForSession(store, sessionId);
+          if (!textingPersona) {
+            return;
+          }
+          normalized = normalizeTextingPersonaOutput(rawContent, textingPersona.config, {
+            charName: textingPersona.charName,
+          });
+        }
+
+        if (!normalized || normalized === rawContent) {
+          return;
+        }
+
+        api.logger?.info?.(`[openclaw-rp] message_sending: normalized texting persona output ${rawContent.length}->${normalized.length}`);
+        const rewrittenMessage = rewriteReplyPayloadContent(event?.message, normalized);
+        return {
+          content: normalized,
+          ...(rewrittenMessage ? { message: rewrittenMessage } : {}),
+        };
+      } catch (err) {
+        api.logger?.warn?.(`[openclaw-rp] message_sending hook failed: ${String(err?.message || err)}`);
+      }
+    });
+
+    registerOptionalHook(api, "reply_payload_sending", async (event, ctx) => {
+      try {
+        if (!isRpAgentAllowed(event, ctx)) {
+          return;
+        }
+        await ensureInitialized();
+        const pending = findPendingOutboundRewrite(pendingOutboundTextingRewrites, outboundRewriteTtlMs, event, ctx);
+        const rawContent = extractOutboundContent(event);
+        let normalized = pending?.content || "";
+
+        if (!normalized) {
+          const rpCtx = findRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, ctx);
+          const sessionId = rpCtx?.session?.id;
+          if (!sessionId || !rawContent) {
+            return;
+          }
+          const textingPersona = getTextingPersonaForSession(store, sessionId);
+          if (!textingPersona) {
+            return;
+          }
+          normalized = normalizeTextingPersonaOutput(rawContent, textingPersona.config, {
+            charName: textingPersona.charName,
+          });
+        }
+
+        if (!normalized || normalized === rawContent) {
+          return;
+        }
+
+        const payload = event?.payload && typeof event.payload === "object" ? event.payload : event;
+        const rewrittenPayload = rewriteReplyPayloadContent(payload, normalized);
+        api.logger?.info?.(`[openclaw-rp] reply_payload_sending: normalized texting persona payload ${rawContent.length}->${normalized.length}`);
+        return rewrittenPayload
+          ? { payload: rewrittenPayload, content: normalized }
+          : { content: normalized };
+      } catch (err) {
+        api.logger?.warn?.(`[openclaw-rp] reply_payload_sending hook failed: ${String(err?.message || err)}`);
+      }
+    });
+
+    registerOptionalHook(api, "message_sent", async (event, ctx) => {
+      try {
+        if (!isRpAgentAllowed(event, ctx)) {
+          return;
+        }
+        const pending = findPendingOutboundRewrite(pendingOutboundTextingRewrites, outboundRewriteTtlMs, event, ctx);
+        dropPendingOutboundRewrite(pendingOutboundTextingRewrites, pending);
+        const rpCtx = findRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, ctx);
+        deleteRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, rpCtx);
+      } catch (err) {
+        api.logger?.warn?.(`[openclaw-rp] message_sent cleanup failed: ${String(err?.message || err)}`);
       }
     });
 
@@ -2641,6 +3034,12 @@ export default {
           companionSchedulerRunning = true;
           try {
             await ensureInitialized();
+            await runDelayedMessageSchedulerOnce({
+              store,
+              sessionManager,
+              telegramRuntime: api.runtime.channel?.telegram,
+              logger: api.logger,
+            });
             await runCompanionSchedulerOnce({
               store,
               router,

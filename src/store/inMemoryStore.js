@@ -30,9 +30,11 @@ export class InMemoryStore {
     this.sessions = new Map();
     this.sessionLorebooks = new Map();
     this.turns = new Map();
+    this.sessionStates = new Map();
     this.summaries = new Map();
     this.turnEmbeddings = new Map();
     this.companionSchedules = new Map();
+    this.delayedMessages = new Map();
   }
 
   nextAssetVersion(userId, type, name) {
@@ -256,6 +258,7 @@ export class InMemoryStore {
     this.sessions.set(id, session);
     this.sessionLorebooks.set(id, [...new Set(lorebookIds || [])]);
     this.turns.set(id, []);
+    this.sessionStates.delete(id);
     this.summaries.set(id, []);
 
     return clone(session);
@@ -329,6 +332,30 @@ export class InMemoryStore {
   getRecentTurns(sessionId, limit) {
     const turns = this.turns.get(sessionId) || [];
     return clone(turns.slice(Math.max(0, turns.length - limit)));
+  }
+
+  getSessionState(sessionId) {
+    const row = this.sessionStates.get(sessionId);
+    return row ? clone(row) : null;
+  }
+
+  upsertSessionState({ sessionId, state, lastEvaluatedAt, lastUserMessageAt, lastAssistantMessageAt }) {
+    if (!this.sessions.has(sessionId)) {
+      throw new RPError(RP_ERROR_CODES.SESSION_NOT_FOUND, "Session not found");
+    }
+    const existing = this.sessionStates.get(sessionId) || {};
+    const now = nowIso();
+    const row = {
+      session_id: sessionId,
+      state_json: JSON.stringify(state || {}),
+      last_evaluated_at: lastEvaluatedAt ?? existing.last_evaluated_at ?? null,
+      last_user_message_at: lastUserMessageAt ?? existing.last_user_message_at ?? null,
+      last_assistant_message_at: lastAssistantMessageAt ?? existing.last_assistant_message_at ?? null,
+      created_at: existing.created_at ?? now,
+      updated_at: now,
+    };
+    this.sessionStates.set(sessionId, row);
+    return clone(row);
   }
 
   deleteLastAssistantTurn(sessionId) {
@@ -496,6 +523,64 @@ export class InMemoryStore {
     row.consecutive_sent = 0;
     row.updated_at = nowIso();
     return true;
+  }
+
+  enqueueDelayedMessage({ id, sessionId, reason, dueAt, notBeforeAt, payload }) {
+    if (!this.sessions.has(sessionId)) {
+      throw new RPError(RP_ERROR_CODES.SESSION_NOT_FOUND, "Session not found");
+    }
+    const now = nowIso();
+    const row = {
+      id: id || makeId("delay"),
+      session_id: sessionId,
+      reason: reason || null,
+      status: "pending",
+      due_at: dueAt,
+      not_before_at: notBeforeAt || null,
+      payload_json: JSON.stringify(payload || {}),
+      failure_count: 0,
+      last_error: null,
+      sent_at: null,
+      created_at: now,
+      updated_at: now,
+    };
+    this.delayedMessages.set(row.id, row);
+    return clone(row);
+  }
+
+  listDueDelayedMessages(nowIsoValue, limit = 20) {
+    return [...this.delayedMessages.values()]
+      .filter((row) => {
+        const session = this.sessions.get(row.session_id);
+        return row.status === "pending" && session?.status === RP_SESSION_STATUS.ACTIVE && row.due_at <= nowIsoValue;
+      })
+      .sort((a, b) => String(a.due_at || "").localeCompare(String(b.due_at || "")))
+      .slice(0, Number(limit) || 20)
+      .map(clone);
+  }
+
+  markDelayedMessageSent({ id, sentAt }) {
+    const row = this.delayedMessages.get(id);
+    if (!row) return null;
+    row.status = "sent";
+    row.sent_at = sentAt || nowIso();
+    row.updated_at = nowIso();
+    return clone(row);
+  }
+
+  markDelayedMessageFailure({ id, error, nextDueAt }) {
+    const row = this.delayedMessages.get(id);
+    if (!row) return null;
+    row.failure_count = Number(row.failure_count || 0) + 1;
+    row.last_error = String(error || "").slice(0, 500);
+    if (nextDueAt) {
+      row.due_at = nextDueAt;
+    }
+    if (row.failure_count >= 3) {
+      row.status = "failed";
+    }
+    row.updated_at = nowIso();
+    return clone(row);
   }
 
   upsertTurnEmbedding({ sessionId, turnIndex, role, content, language, vector, model }) {

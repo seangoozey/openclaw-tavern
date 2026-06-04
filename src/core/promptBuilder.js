@@ -56,6 +56,7 @@ export function buildPrompt({
   summary,
   recentTurns,
   retrievedMemories,
+  runtimeStateText,
   userName,
   maxPromptTokens = 8000,
   tokenEstimator = estimateTokens,
@@ -114,6 +115,9 @@ export function buildPrompt({
   );
   remaining -= tokenEstimator(memoryText);
 
+  const stateText = trimToTokens(runtimeStateText || "", Math.min(600, remaining));
+  remaining -= tokenEstimator(stateText);
+
   const recent = [];
   for (let i = recentTurns.length - 1; i >= 0; i -= 1) {
     const t = recentTurns[i];
@@ -139,6 +143,9 @@ export function buildPrompt({
   }
   if (memoryText) {
     messages.push(toSystem(`Relevant Memory Recall:\n${memoryText}`));
+  }
+  if (stateText) {
+    messages.push(toSystem(`Runtime State:\n${stateText}`));
   }
   messages.push(...recent);
   if (fixedPostHistory) {

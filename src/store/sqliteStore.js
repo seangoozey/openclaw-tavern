@@ -553,6 +553,40 @@ export class SqliteStore {
       .map(clone);
   }
 
+  getSessionState(sessionId) {
+    const row = this.db.prepare("SELECT * FROM rp_session_states WHERE session_id = ?").get(sessionId);
+    return row ? clone(row) : null;
+  }
+
+  upsertSessionState({ sessionId, state, lastEvaluatedAt, lastUserMessageAt, lastAssistantMessageAt }) {
+    const exists = this.db.prepare("SELECT id FROM rp_sessions WHERE id = ?").get(sessionId);
+    if (!exists) {
+      throw new RPError(RP_ERROR_CODES.SESSION_NOT_FOUND, "Session not found");
+    }
+    const existing = this.getSessionState(sessionId);
+    const stateJson = safeJson(state || {});
+    this.db
+      .prepare(
+        `INSERT INTO rp_session_states
+         (session_id, state_json, last_evaluated_at, last_user_message_at, last_assistant_message_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(session_id) DO UPDATE SET
+           state_json = excluded.state_json,
+           last_evaluated_at = excluded.last_evaluated_at,
+           last_user_message_at = excluded.last_user_message_at,
+           last_assistant_message_at = excluded.last_assistant_message_at,
+           updated_at = CURRENT_TIMESTAMP`,
+      )
+      .run(
+        sessionId,
+        stateJson,
+        lastEvaluatedAt ?? existing?.last_evaluated_at ?? null,
+        lastUserMessageAt ?? existing?.last_user_message_at ?? null,
+        lastAssistantMessageAt ?? existing?.last_assistant_message_at ?? null,
+      );
+    return this.getSessionState(sessionId);
+  }
+
   deleteLastAssistantTurn(sessionId) {
     const row = this.db
       .prepare(
@@ -801,6 +835,70 @@ export class SqliteStore {
       .prepare("UPDATE rp_companion_schedules SET consecutive_sent = 0, updated_at = CURRENT_TIMESTAMP WHERE session_id = ?")
       .run(sessionId);
     return Boolean(result?.changes);
+  }
+
+  enqueueDelayedMessage({ id, sessionId, reason, dueAt, notBeforeAt, payload }) {
+    const exists = this.db.prepare("SELECT id FROM rp_sessions WHERE id = ?").get(sessionId);
+    if (!exists) {
+      throw new RPError(RP_ERROR_CODES.SESSION_NOT_FOUND, "Session not found");
+    }
+    const messageId = id || makeId("delay");
+    this.db
+      .prepare(
+        `INSERT INTO rp_delayed_messages
+         (id, session_id, reason, status, due_at, not_before_at, payload_json)
+         VALUES (?, ?, ?, 'pending', ?, ?, ?)`,
+      )
+      .run(messageId, sessionId, reason || null, dueAt, notBeforeAt || null, safeJson(payload || {}));
+    return this.db.prepare("SELECT * FROM rp_delayed_messages WHERE id = ?").get(messageId);
+  }
+
+  listDueDelayedMessages(nowIso, limit = 20) {
+    return this.db
+      .prepare(
+        `SELECT dm.*
+         FROM rp_delayed_messages dm
+         JOIN rp_sessions s ON s.id = dm.session_id
+         WHERE dm.status = 'pending'
+           AND s.status = 'active'
+           AND dm.due_at <= ?
+         ORDER BY dm.due_at ASC
+         LIMIT ?`,
+      )
+      .all(nowIso, Number(limit) || 20)
+      .map(clone);
+  }
+
+  markDelayedMessageSent({ id, sentAt }) {
+    this.db
+      .prepare(
+        `UPDATE rp_delayed_messages
+         SET status = 'sent',
+             sent_at = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+      )
+      .run(sentAt || new Date().toISOString(), id);
+    const row = this.db.prepare("SELECT * FROM rp_delayed_messages WHERE id = ?").get(id);
+    return row ? clone(row) : null;
+  }
+
+  markDelayedMessageFailure({ id, error, nextDueAt }) {
+    const row = this.db.prepare("SELECT failure_count FROM rp_delayed_messages WHERE id = ?").get(id);
+    const nextFailureCount = Number(row?.failure_count || 0) + 1;
+    this.db
+      .prepare(
+        `UPDATE rp_delayed_messages
+         SET failure_count = ?,
+             last_error = ?,
+             due_at = COALESCE(?, due_at),
+             status = CASE WHEN ? >= 3 THEN 'failed' ELSE status END,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+      )
+      .run(nextFailureCount, String(error || "").slice(0, 500), nextDueAt || null, nextFailureCount, id);
+    const updated = this.db.prepare("SELECT * FROM rp_delayed_messages WHERE id = ?").get(id);
+    return updated ? clone(updated) : null;
   }
 
   upsertTurnEmbedding({ sessionId, turnIndex, role, content, language, vector, model }) {

@@ -148,9 +148,11 @@ export function importCardFromAttachment(attachment) {
   const lower = attachment.filename.toLowerCase();
   let raw;
 
+  const trimmedStart = attachment.buffer.toString("utf8", 0, Math.min(32, attachment.buffer.length)).trimStart();
+
   if (lower.endsWith(".png")) {
     raw = extractCharaJsonFromPng(attachment.buffer);
-  } else if (lower.endsWith(".json")) {
+  } else if (lower.endsWith(".json") || trimmedStart.startsWith("{")) {
     raw = parseJsonBuffer(attachment.buffer);
   } else {
     throw new RPError(RP_ERROR_CODES.UNSUPPORTED_FILE, "Card import supports PNG or JSON only");

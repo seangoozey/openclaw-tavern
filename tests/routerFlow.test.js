@@ -165,3 +165,256 @@ test("companion-auto stores per-session Telegram schedule", async () => {
   assert.equal(disabled.response.ok, true);
   assert.equal(disabled.response.data.enabled, false);
 });
+
+function textingCardPayload() {
+  return {
+    spec: "chara_card_v2",
+    spec_version: "2.0",
+    data: {
+      name: "Sarah Miller",
+      description: "wrong number texting persona",
+      personality: "sweet, awkward, curious",
+      first_mes: "wait. who is this?",
+      system_prompt: "You are Sarah Miller texting in real time.",
+      extensions: {
+        "openclaw/texting_persona": {
+          enabled: true,
+          timezone: "America/New_York",
+          default_state: {
+            current_location: "dorm_room",
+            current_activity: "texting",
+            attention_level: "casually_available",
+            emotional_state: "normal",
+            trust_in_user: 5,
+            flirt_comfort: 0,
+            relationship_temperature: "cool",
+          },
+          schedule: {
+            day_rhythm: {
+              evening: {
+                time: "17:00-22:30",
+                location: "dorm_room",
+                activity: "avoiding_homework",
+                attention: "casually_available",
+                mood: "playful",
+              },
+            },
+          },
+          message_style: {
+            output_limits: {
+              max_messages: 3,
+              max_total_chars: 180,
+              max_chars_per_message: 80,
+              proactive_max_messages: 2,
+              proactive_max_total_chars: 120,
+            },
+            rules: ["Prefer short natural texts."],
+          },
+          proactive_texting: {
+            trigger_categories: ["boredom", "callback"],
+            rules: ["Do not always begin with flirtation."],
+          },
+        },
+      },
+    },
+  };
+}
+
+test("texting persona extension persists state and injects runtime prompt", async () => {
+  let capturedPrompt = null;
+  const plugin = createRPPlugin({
+    modelProvider: {
+      async generate({ prompt }) {
+        capturedPrompt = prompt;
+        return { content: "okay wait\nthat was kind of nice" };
+      },
+    },
+  });
+
+  let r = await plugin.hooks.message_received(
+    makeCtx("/rp import-card", {
+      attachments: [{ filename: "SarahMiller", buffer: Buffer.from(JSON.stringify(textingCardPayload())) }],
+    }),
+  );
+  const cardId = r.response.data.asset_id;
+
+  r = await plugin.hooks.message_received(
+    makeCtx("/rp import-preset", {
+      attachments: [{ filename: "preset.json", buffer: Buffer.from(JSON.stringify({ temperature: 0.7 })) }],
+    }),
+  );
+  const presetId = r.response.data.asset_id;
+
+  r = await plugin.hooks.message_received(makeCtx(`/rp start --card ${cardId} --preset ${presetId}`));
+  const sessionId = r.response.data.session_id;
+  assert.ok(plugin.services.store.getSessionState(sessionId));
+
+  await plugin.hooks.message_received(makeCtx("no pressure, you can slow down"));
+  const stateRow = plugin.services.store.getSessionState(sessionId);
+  const state = JSON.parse(stateRow.state_json);
+
+  assert.ok(state.trust_in_user >= 8);
+  assert.ok(capturedPrompt.messages.some((msg) => String(msg.content).includes("Runtime texting persona state")));
+  assert.ok(capturedPrompt.messages.some((msg) => String(msg.content).includes("trust_in_user")));
+});
+
+test("texting persona companion nudge returns direct text without generic blocks", async () => {
+  const plugin = createRPPlugin({
+    contextPolicy: {
+      companionIdleMinutes: 0,
+    },
+    modelProvider: {
+      async generate() {
+        return { content: "hi. this is me pretending i had a reason to message you" };
+      },
+    },
+  });
+
+  let r = await plugin.hooks.message_received(
+    makeCtx("/rp import-card", {
+      attachments: [{ filename: "SarahMiller", buffer: Buffer.from(JSON.stringify(textingCardPayload())) }],
+    }),
+  );
+  const cardId = r.response.data.asset_id;
+
+  r = await plugin.hooks.message_received(
+    makeCtx("/rp import-preset", {
+      attachments: [{ filename: "preset.json", buffer: Buffer.from(JSON.stringify({ temperature: 0.7 })) }],
+    }),
+  );
+  const presetId = r.response.data.asset_id;
+
+  await plugin.hooks.message_received(makeCtx(`/rp start --card ${cardId} --preset ${presetId}`));
+  const nudged = await plugin.hooks.message_received(makeCtx('/rp companion-nudge --force --reason "bored evening"'));
+
+  assert.equal(nudged.response.ok, true);
+  assert.equal(nudged.response.data.content.includes("ðŸ’Œ"), false);
+  assert.equal(nudged.response.data.content.includes("ðŸ§­"), false);
+  assert.equal(nudged.response.data.companion.textingPersona, true);
+});
+
+test("texting persona normalizes model text dumps into short messages", async () => {
+  const dumped = [
+    "Sarah: okay so I have been thinking about this for the entire walk back from class and I probably should not admit that because it makes me sound ridiculous.",
+    "But the truth is I kept replaying what you said and then I got embarrassed and then I smiled again and now I am annoyed at myself for smiling.",
+    "Also my roommate is making microwave noodles and judging me for staring at my phone, which is unfair because technically I am being very normal.",
+  ].join(" ");
+  const plugin = createRPPlugin({
+    modelProvider: {
+      async generate() {
+        return { content: dumped };
+      },
+    },
+  });
+
+  let r = await plugin.hooks.message_received(
+    makeCtx("/rp import-card", {
+      attachments: [{ filename: "SarahMiller", buffer: Buffer.from(JSON.stringify(textingCardPayload())) }],
+    }),
+  );
+  const cardId = r.response.data.asset_id;
+
+  r = await plugin.hooks.message_received(
+    makeCtx("/rp import-preset", {
+      attachments: [{ filename: "preset.json", buffer: Buffer.from(JSON.stringify({ temperature: 0.7 })) }],
+    }),
+  );
+  const presetId = r.response.data.asset_id;
+
+  await plugin.hooks.message_received(makeCtx(`/rp start --card ${cardId} --preset ${presetId}`));
+  const reply = await plugin.hooks.message_received(makeCtx("what are you thinking about?"));
+  const content = reply.response.data.content;
+
+  assert.equal(reply.response.ok, true);
+  assert.ok(content.length <= 180);
+  assert.ok(content.split("\n").length <= 3);
+  assert.equal(content.includes("Sarah:"), false);
+});
+
+function sleepingTextingCardPayload() {
+  const payload = textingCardPayload();
+  payload.data.extensions["openclaw/texting_persona"].default_state.attention_level = "asleep";
+  payload.data.extensions["openclaw/texting_persona"].schedule = {};
+  payload.data.extensions["openclaw/texting_persona"].availability = {
+    by_attention: {
+      asleep: "delay",
+    },
+    delay_minutes_by_attention: {
+      asleep: 5,
+    },
+  };
+  payload.data.extensions["openclaw/texting_persona"].proactive_texting.fallback_messages = {
+    asleep: ["sorry i passed out"],
+    default: ["hey"],
+  };
+  return payload;
+}
+
+test("texting persona queues delayed reply instead of responding while asleep", async () => {
+  const plugin = createRPPlugin({
+    modelProvider: {
+      async generate() {
+        return { content: "this should not be generated immediately" };
+      },
+    },
+  });
+
+  let r = await plugin.hooks.message_received(
+    makeCtx("/rp import-card", {
+      attachments: [{ filename: "Sleepy", buffer: Buffer.from(JSON.stringify(sleepingTextingCardPayload())) }],
+    }),
+  );
+  const cardId = r.response.data.asset_id;
+
+  r = await plugin.hooks.message_received(
+    makeCtx("/rp import-preset", {
+      attachments: [{ filename: "preset.json", buffer: Buffer.from(JSON.stringify({ temperature: 0.7 })) }],
+    }),
+  );
+  const presetId = r.response.data.asset_id;
+
+  await plugin.hooks.message_received(makeCtx(`/rp start --card ${cardId} --preset ${presetId}`));
+  const inbound = await plugin.hooks.message_received(makeCtx("you awake?"));
+
+  assert.equal(inbound.handled, false);
+  const due = plugin.services.store.listDueDelayedMessages("9999-01-01T00:00:00.000Z");
+  assert.equal(due.length, 1);
+  assert.equal(due[0].reason, "attention_asleep");
+});
+
+test("delayed texting message can generate and append assistant turn", async () => {
+  const plugin = createRPPlugin({
+    modelProvider: {
+      async generate() {
+        return { content: "sorry i passed out\nwhat were you saying?" };
+      },
+    },
+  });
+
+  let r = await plugin.hooks.message_received(
+    makeCtx("/rp import-card", {
+      attachments: [{ filename: "Sleepy", buffer: Buffer.from(JSON.stringify(sleepingTextingCardPayload())) }],
+    }),
+  );
+  const cardId = r.response.data.asset_id;
+
+  r = await plugin.hooks.message_received(
+    makeCtx("/rp import-preset", {
+      attachments: [{ filename: "preset.json", buffer: Buffer.from(JSON.stringify({ temperature: 0.7 })) }],
+    }),
+  );
+  const presetId = r.response.data.asset_id;
+
+  const started = await plugin.hooks.message_received(makeCtx(`/rp start --card ${cardId} --preset ${presetId}`));
+  const sessionId = started.response.data.session_id;
+  await plugin.hooks.message_received(makeCtx("you awake?"));
+  const delayed = plugin.services.store.listDueDelayedMessages("9999-01-01T00:00:00.000Z")[0];
+
+  const generated = await plugin.services.sessionManager.generateDelayedTextingMessage(delayed);
+
+  assert.equal(generated.sessionId, sessionId);
+  assert.equal(generated.text, "sorry i passed out\nwhat were you saying?");
+  const turns = plugin.services.store.getTurns(sessionId);
+  assert.equal(turns.at(-1).role, "assistant");
+  assert.equal(turns.at(-1).content, generated.text);
+});

@@ -40,6 +40,34 @@ test("import V2 card JSON", () => {
   assert.equal(res.card.system_prompt, "stay in character");
 });
 
+test("import extensionless V2 card JSON with OpenClaw texting persona extension", () => {
+  const raw = {
+    spec: "chara_card_v2",
+    spec_version: "2.0",
+    data: {
+      name: "Sarah Miller",
+      description: "texting persona",
+      extensions: {
+        "openclaw/texting_persona": {
+          enabled: true,
+          default_state: {
+            current_location: "dorm_room",
+          },
+        },
+      },
+    },
+  };
+
+  const res = importCardFromAttachment({
+    filename: "SarahMiller",
+    buffer: Buffer.from(JSON.stringify(raw), "utf8"),
+  });
+
+  assert.equal(res.sourceFormat, "chara_card_v2");
+  assert.equal(res.card.name, "Sarah Miller");
+  assert.equal(res.extra.data_extensions["openclaw/texting_persona"].enabled, true);
+});
+
 test("import unknown card format as best effort", () => {
   const raw = {
     spec: "mystery_card_v9",

@@ -520,7 +520,11 @@ export class CommandRouter {
         return null;
       }
       if (handled.ignored) {
+        if (["delayed_response_queued", "availability_no_reply"].includes(handled.reason)) {
+          return null;
+        }
         return ok("Session message ignored", {
+          reason: handled.reason,
           status: handled.status,
         });
       }
@@ -903,6 +907,9 @@ export class CommandRouter {
       presetId: preset.id,
       lorebookIds: lorebooks.map((x) => x.id),
     });
+    this.sessionManager?.updateTextingPersonaState?.(session.id, {
+      type: "session_start",
+    });
 
     const cardDetail = this.store.getAssetDetail(card.id)?.detail || {};
     const charName = card.name || "Character";
@@ -916,6 +923,10 @@ export class CommandRouter {
       const firstTurn = this.store.appendTurn({
         sessionId: session.id,
         role: "assistant",
+        content: firstMessage,
+      });
+      this.sessionManager?.updateTextingPersonaState?.(session.id, {
+        type: "assistant_turn",
         content: firstMessage,
       });
       this.sessionManager?.indexTurnEmbeddingAsync?.(session.id, firstTurn);

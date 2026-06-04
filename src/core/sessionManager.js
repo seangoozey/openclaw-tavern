@@ -11,6 +11,16 @@ import { SessionMutex } from "./sessionMutex.js";
 import { retryWithBackoff } from "./retry.js";
 import { matchLorebookEntries } from "./lorebookMatcher.js";
 import { resolveModelConfig } from "./modelConfigResolver.js";
+import {
+  buildTextingPersonaPromptBlock,
+  buildTextingPersonaProactivePrompt,
+  buildTextingPersonaFallbackMessage,
+  decideTextingPersonaAvailability,
+  addMinutesIso,
+  ensureTextingPersonaState,
+  hasTextingPersona,
+  normalizeTextingPersonaOutput,
+} from "./textingPersona.js";
 
 function parseEntries(raw) {
   if (!raw) return [];
@@ -19,6 +29,16 @@ function parseEntries(raw) {
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
+  }
+}
+
+function parsePayloadJson(raw) {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
   }
 }
 
@@ -178,6 +198,10 @@ export class SessionManager {
         content,
         tokenEstimate: this.tokenEstimator(content),
       });
+      this.updateTextingPersonaState(current.id, {
+        type: "user_turn",
+        content,
+      });
       await this.indexTurnEmbedding(current.id, userTurn);
 
       const summaryResult = await this.maybeSummarize(current.id);
@@ -186,6 +210,37 @@ export class SessionManager {
         queryText: content,
         userName: userId,
       });
+      if (prepared.textingPersona) {
+        const availability = decideTextingPersonaAvailability({
+          config: prepared.textingPersona.config,
+          state: prepared.textingPersona.state,
+        });
+        if (availability.action === "delay") {
+          const delayedMessage = this.enqueueDelayedTextingReply({
+            session: current,
+            userName: userId,
+            queryText: content,
+            availability,
+          });
+          return {
+            ignored: true,
+            reason: "delayed_response_queued",
+            delayedMessage,
+            availability,
+            status: RP_SESSION_STATUS.ACTIVE,
+            warnings: summaryResult.attempted && !summaryResult.success ? [RP_ERROR_CODES.SUMMARY_FAILED] : [],
+          };
+        }
+        if (availability.action === "no_reply") {
+          return {
+            ignored: true,
+            reason: "availability_no_reply",
+            availability,
+            status: RP_SESSION_STATUS.ACTIVE,
+            warnings: summaryResult.attempted && !summaryResult.success ? [RP_ERROR_CODES.SUMMARY_FAILED] : [],
+          };
+        }
+      }
       const modelConfig = this.resolveModelConfig({
         preset: prepared.bundle.preset,
       });
@@ -212,7 +267,10 @@ export class SessionManager {
         throw new RPError(RP_ERROR_CODES.MODEL_UNAVAILABLE, err?.message || "Model unavailable");
       });
 
-      const assistantText = modelResponse?.content;
+      const charName = prepared.bundle.card?.detail?.name || prepared.bundle.card?.name || "Character";
+      const assistantText = prepared.textingPersona
+        ? normalizeTextingPersonaOutput(modelResponse?.content, prepared.textingPersona.config, { charName })
+        : modelResponse?.content;
       if (!assistantText) {
         throw new RPError(RP_ERROR_CODES.MODEL_UNAVAILABLE, "Model returned empty content");
       }
@@ -222,6 +280,10 @@ export class SessionManager {
         role: "assistant",
         content: assistantText,
         tokenEstimate: this.tokenEstimator(assistantText),
+      });
+      this.updateTextingPersonaState(current.id, {
+        type: "assistant_turn",
+        content: assistantText,
       });
       await this.indexTurnEmbedding(current.id, turn);
 
@@ -259,6 +321,10 @@ export class SessionManager {
       let latestUserTurn = null;
       if (editText) {
         latestUserTurn = this.store.replaceLastUserTurn(current.id, editText, this.tokenEstimator(editText));
+        this.updateTextingPersonaState(current.id, {
+          type: "user_turn",
+          content: editText,
+        });
         await this.indexTurnEmbedding(current.id, latestUserTurn);
       } else {
         const turns = this.store.getTurns(current.id);
@@ -287,7 +353,10 @@ export class SessionManager {
         throw new RPError(RP_ERROR_CODES.MODEL_UNAVAILABLE, err?.message || "Model unavailable");
       });
 
-      const assistantText = modelResponse?.content;
+      const charName = prepared.bundle.card?.detail?.name || prepared.bundle.card?.name || "Character";
+      const assistantText = prepared.textingPersona
+        ? normalizeTextingPersonaOutput(modelResponse?.content, prepared.textingPersona.config, { charName })
+        : modelResponse?.content;
       if (!assistantText) {
         throw new RPError(RP_ERROR_CODES.MODEL_UNAVAILABLE, "Model returned empty content");
       }
@@ -297,6 +366,10 @@ export class SessionManager {
         role: "assistant",
         content: assistantText,
         tokenEstimate: this.tokenEstimator(assistantText),
+      });
+      this.updateTextingPersonaState(current.id, {
+        type: "assistant_turn",
+        content: assistantText,
       });
       await this.indexTurnEmbedding(current.id, turn);
 
@@ -372,13 +445,19 @@ export class SessionManager {
         userName: current.user_id,
         excludeRecentTurns: 0,
       });
-      const companion = await this.composeCompanionMessage({
-        prepared,
-        userName: current.user_id,
-        triggerReason,
-        mode: asCompanionMode(mode),
-      });
-      const text = renderCompanionText(companion);
+      const companion = prepared.textingPersona
+        ? await this.composeTextingPersonaMessage({
+            prepared,
+            userName: current.user_id,
+            triggerReason,
+          })
+        : await this.composeCompanionMessage({
+            prepared,
+            userName: current.user_id,
+            triggerReason,
+            mode: asCompanionMode(mode),
+          });
+      const text = prepared.textingPersona ? companion?.proactiveMessage || "" : renderCompanionText(companion);
       if (!text) {
         return {
           ignored: true,
@@ -392,12 +471,16 @@ export class SessionManager {
         content: text,
         tokenEstimate: this.tokenEstimator(text),
       });
+      this.updateTextingPersonaState(current.id, {
+        type: "assistant_turn",
+        content: text,
+      });
       await this.indexTurnEmbedding(current.id, proactiveTurn);
 
       return {
         sessionId: current.id,
         text,
-        followupText: companion.proactiveQuestion || "",
+        followupText: prepared.textingPersona ? "" : companion.proactiveQuestion || "",
         companion,
         triggerReason,
         idleMinutes,
@@ -406,6 +489,130 @@ export class SessionManager {
         turn: proactiveTurn,
       };
     });
+  }
+
+  updateTextingPersonaState(sessionId, event) {
+    try {
+      const bundle = this.store.getSessionAssetBundle(sessionId);
+      return ensureTextingPersonaState({
+        store: this.store,
+        sessionId,
+        card: bundle.card,
+        event,
+      });
+    } catch (err) {
+      this.logger.warn?.("rp.texting_persona.state_failed", {
+        session_id: sessionId,
+        error: String(err?.message || err),
+      });
+      return null;
+    }
+  }
+
+  enqueueDelayedTextingReply({ session, userName, queryText, availability }) {
+    if (typeof this.store.enqueueDelayedMessage !== "function") {
+      return null;
+    }
+    return this.store.enqueueDelayedMessage({
+      sessionId: session.id,
+      reason: availability?.reason || "availability_delay",
+      dueAt: availability?.due_at || addMinutesIso(30),
+      payload: {
+        kind: "texting_delayed_reply",
+        user_id: session.user_id,
+        user_name: userName || session.user_id,
+        query_text: queryText || "",
+        availability,
+      },
+    });
+  }
+
+  async generateDelayedTextingMessage(delayedMessage) {
+    const payload = parsePayloadJson(delayedMessage?.payload_json);
+    if (payload?.kind !== "texting_delayed_reply") {
+      return null;
+    }
+    const session = this.store.getSessionById(delayedMessage.session_id);
+    if (!session || session.status !== RP_SESSION_STATUS.ACTIVE) {
+      return null;
+    }
+
+    const prepared = await this.preparePromptForSession(session.id, {
+      queryText: payload.query_text || delayedMessage.reason || "delayed texting reply",
+      userName: payload.user_name || session.user_id,
+      excludeRecentTurns: 0,
+    });
+    if (!prepared.textingPersona) {
+      return null;
+    }
+
+    const charName = prepared.bundle.card?.detail?.name || prepared.bundle.card?.name || "Character";
+    const modelConfig = this.resolveModelConfig({
+      preset: prepared.bundle.preset,
+      commandOverrides: {
+        temperature: 0.75,
+        max_tokens: 180,
+      },
+    });
+    const prompt = {
+      messages: [
+        ...prepared.prompt.messages,
+        {
+          role: "system",
+          content: [
+            "This is a delayed text reply. The user sent a message earlier, but the character was not available to answer immediately.",
+            "Reply as if the character is now texting back after that delay.",
+            "Do not explain the scheduling system.",
+            "Return only the character's text message content.",
+          ].join(" "),
+        },
+      ],
+    };
+
+    let text = "";
+    if (this.modelProvider?.generate) {
+      const modelResponse = await retryWithBackoff(
+        () =>
+          this.modelProvider.generate({
+            session: prepared.bundle.session,
+            preset: prepared.bundle.preset,
+            prompt,
+            modelConfig,
+          }),
+        { retries: 1, delaysMs: [800], timeoutMs: 20000 },
+      );
+      text = normalizeTextingPersonaOutput(modelResponse?.content || "", prepared.textingPersona.config, {
+        charName,
+      });
+    }
+    if (!text) {
+      text = buildTextingPersonaFallbackMessage({
+        config: prepared.textingPersona.config,
+        state: prepared.textingPersona.state,
+      });
+    }
+    if (!text) {
+      return null;
+    }
+
+    const turn = this.store.appendTurn({
+      sessionId: session.id,
+      role: "assistant",
+      content: text,
+      tokenEstimate: this.tokenEstimator(text),
+    });
+    this.updateTextingPersonaState(session.id, {
+      type: "assistant_turn",
+      content: text,
+    });
+    await this.indexTurnEmbedding(session.id, turn);
+
+    return {
+      sessionId: session.id,
+      text,
+      turn,
+      delayedMessageId: delayedMessage.id,
+    };
   }
 
   async composeCompanionMessage({ prepared, userName, triggerReason, mode }) {
@@ -498,6 +705,83 @@ export class SessionManager {
       }
     } catch (err) {
       this.logger.warn?.("rp.companion.generate_failed", {
+        error: String(err?.message || err),
+      });
+    }
+
+    return fallback;
+  }
+
+  async composeTextingPersonaMessage({ prepared, userName, triggerReason }) {
+    const charName = prepared?.bundle?.card?.detail?.name || prepared?.bundle?.card?.name || "Character";
+    const fallback = {
+      proactiveMessage: buildTextingPersonaFallbackMessage({
+        config: prepared?.textingPersona?.config,
+        state: prepared?.textingPersona?.state,
+      }),
+      source: "fallback",
+      textingPersona: true,
+    };
+
+    if (!this.modelProvider?.generate) {
+      return fallback;
+    }
+
+    const recentText = formatRecentTurnsForCompanion(
+      prepared?.recentTurns || [],
+      charName,
+      Number(this.policy.companionRecentTurns) || 8,
+    );
+    const prompt = buildTextingPersonaProactivePrompt({
+      charName,
+      userName,
+      triggerReason,
+      config: prepared?.textingPersona?.config,
+      state: prepared?.textingPersona?.state,
+      recentText,
+    });
+
+    try {
+      const modelConfig = this.resolveModelConfig({
+        preset: prepared?.bundle?.preset,
+        commandOverrides: {
+          temperature: 0.75,
+          max_tokens: 160,
+        },
+      });
+      const modelResponse = await retryWithBackoff(
+        () =>
+          this.modelProvider.generate({
+            session: prepared?.bundle?.session,
+            preset: prepared?.bundle?.preset,
+            prompt: {
+              messages: [
+                {
+                  role: "system",
+                  content:
+                    "Generate only a plausible outgoing text from the character. Do not output JSON, labels, markdown, narration, or an action report.",
+                },
+                { role: "user", content: prompt },
+              ],
+            },
+            modelConfig,
+          }),
+        { retries: 1, delaysMs: [800], timeoutMs: 20000 },
+      );
+      const proactiveMessage = normalizeTextingPersonaOutput(
+        modelResponse?.content || "",
+        prepared?.textingPersona?.config,
+        { proactive: true, charName },
+      );
+      if (proactiveMessage) {
+        return {
+          proactiveMessage,
+          source: "model",
+          textingPersona: true,
+        };
+      }
+    } catch (err) {
+      this.logger.warn?.("rp.texting_persona.generate_failed", {
         error: String(err?.message || err),
       });
     }
@@ -611,6 +895,20 @@ export class SessionManager {
       queryText,
       beforeTurnIndex,
     });
+    const textingPersona = hasTextingPersona(bundle.card)
+      ? ensureTextingPersonaState({
+          store: this.store,
+          sessionId,
+          card: bundle.card,
+        })
+      : null;
+    const runtimeStateText = textingPersona
+      ? buildTextingPersonaPromptBlock({
+          config: textingPersona.config,
+          state: textingPersona.state,
+          charName: bundle.card?.detail?.name || bundle.card?.name || "Character",
+        })
+      : "";
 
     const prompt = buildPrompt({
       card: bundle.card,
@@ -619,6 +917,7 @@ export class SessionManager {
       recentTurns,
       retrievedMemories,
       userName: options.userName,
+      runtimeStateText,
       maxPromptTokens: this.policy.maxPromptTokens,
       tokenEstimator: this.tokenEstimator,
       budget: {
@@ -633,6 +932,7 @@ export class SessionManager {
       recentTurns,
       activeLorebookEntries,
       retrievedMemories,
+      textingPersona,
       prompt,
     };
   }
