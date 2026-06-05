@@ -181,6 +181,9 @@ Add plugin config under your OpenClaw config:
   "plugins": {
     "entries": {
       "openclaw-rp-plugin": {
+        "hooks": {
+          "allowConversationAccess": true
+        },
         "config": {
           "allowedAgents": ["main"],
           "agentImage": {
@@ -190,6 +193,9 @@ Add plugin config under your OpenClaw config:
           },
           "telegram": {
             "botToken": "123456:replace-with-your-bot-token"
+          },
+          "nativeHooks": {
+            "replyPayloadSending": false
           }
         }
       }
@@ -203,6 +209,8 @@ Add plugin config under your OpenClaw config:
 - `agentImage.imageModel`: overrides only the agent image-generation model, without changing the `/rp` dialogue model
 - `allowedAgents`: optional list of OpenClaw agent IDs allowed to use `/rp` commands and RP hooks. Empty or omitted means all agents.
 - `telegram.botToken`: optional fallback Bot API token for text-only follow-ups when OpenClaw does not expose `runtime.channel.telegram.sendMessageTelegram` to plugins. You can also set `TELEGRAM_RP_BOT_TOKEN`; `OPENCLAW_RP_TELEGRAM_BOT_TOKEN` and `TELEGRAM_BOT_TOKEN` remain compatibility aliases.
+- `hooks.allowConversationAccess`: required by OpenClaw for non-bundled plugins that register conversation hooks such as `llm_output`. Without it, native assistant turns and native auto-media follow-ups cannot be persisted by the plugin.
+- `nativeHooks.replyPayloadSending`: opt-in for OpenClaw builds that expose `reply_payload_sending`. Keep it `false` on `v2026.5.27-beta.1` if the container logs `unknown typed hook "reply_payload_sending"`.
 
 To let an OpenClaw agent use it, also allow `rp_generate_image` in the agent tool config. On OpenClaw `2026.3.x`, the recommended config is:
 

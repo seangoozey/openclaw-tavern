@@ -2003,6 +2003,22 @@ export function resolveTelegramRuntime(api) {
   return createTelegramBotApiRuntime({ botToken, apiBaseUrl });
 }
 
+function hasConversationHookAccess(api) {
+  const openclawConfig = loadOpenClawFileConfig();
+  const rootConfig =
+    isObject(api?.config) && Object.keys(api.config).length > 0 ? api.config : openclawConfig;
+  const entry = rootConfig?.plugins?.entries?.[OPENCLAW_RP_PLUGIN_ID];
+  return entry?.hooks?.allowConversationAccess === true;
+}
+
+function isReplyPayloadSendingHookEnabled(api) {
+  const openclawConfig = loadOpenClawFileConfig();
+  const rootConfig =
+    isObject(api?.config) && Object.keys(api.config).length > 0 ? api.config : openclawConfig;
+  const pluginConfig = getOpenClawRpPluginConfig(rootConfig);
+  return pluginConfig?.nativeHooks?.replyPayloadSending === true;
+}
+
 function pickConfigValue(source, paths) {
   const values = [];
   for (const pathTokens of paths) {
@@ -2886,121 +2902,127 @@ export default {
       }
     });
 
-    // Capture LLM output and append as assistant turn in the RP session
-    api.on("llm_output", async (event, ctx) => {
-      try {
-        if (!isRpAgentAllowed(event, ctx)) {
-          return;
-        }
-        await ensureInitialized();
-        const rpCtx = findRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, ctx);
-        if (!rpCtx) {
-          return;
-        }
-
-        const session = store.getSessionById(rpCtx.session.id);
-        if (!session || session.status !== "active") {
-          return;
-        }
-
-        const lastText = pickAssistantTextFromLlmOutput(event);
-        if (!lastText) {
-          return;
-        }
-
-        let storedText = lastText;
+    // Capture LLM output and append as assistant turn in the RP session.
+    if (hasConversationHookAccess(api)) {
+      registerOptionalHook(api, "llm_output", async (event, ctx) => {
         try {
-          const textingPersona = getTextingPersonaForSession(store, session.id);
-          if (textingPersona) {
-            const normalized = normalizeTextingPersonaOutput(lastText, textingPersona.config, {
-              charName: textingPersona.charName,
-            });
-            if (normalized) {
-              storedText = normalized;
-              rememberPendingOutboundRewrite(pendingOutboundTextingRewrites, outboundRewriteTtlMs, {
-                at: Date.now(),
-                sessionId: session.id,
-                content: normalized,
-                keys: collectOutboundRewriteKeys(event, ctx, rpCtx),
-              });
-            }
+          if (!isRpAgentAllowed(event, ctx)) {
+            return;
           }
+          await ensureInitialized();
+          const rpCtx = findRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, ctx);
+          if (!rpCtx) {
+            return;
+          }
+
+          const session = store.getSessionById(rpCtx.session.id);
+          if (!session || session.status !== "active") {
+            return;
+          }
+
+          const lastText = pickAssistantTextFromLlmOutput(event);
+          if (!lastText) {
+            return;
+          }
+
+          let storedText = lastText;
+          try {
+            const textingPersona = getTextingPersonaForSession(store, session.id);
+            if (textingPersona) {
+              const normalized = normalizeTextingPersonaOutput(lastText, textingPersona.config, {
+                charName: textingPersona.charName,
+              });
+              if (normalized) {
+                storedText = normalized;
+                rememberPendingOutboundRewrite(pendingOutboundTextingRewrites, outboundRewriteTtlMs, {
+                  at: Date.now(),
+                  sessionId: session.id,
+                  content: normalized,
+                  keys: collectOutboundRewriteKeys(event, ctx, rpCtx),
+                });
+              }
+            }
+          } catch (err) {
+            api.logger?.warn?.(`[openclaw-rp] llm_output texting normalization failed: ${String(err?.message || err)}`);
+          }
+
+          const assistantTurn = store.appendTurn({
+            sessionId: session.id,
+            role: "assistant",
+            content: storedText,
+            tokenEstimate: estimateTokens(storedText),
+          });
+          sessionManager?.updateTextingPersonaState?.(session.id, {
+            type: "assistant_turn",
+            content: storedText,
+          });
+          sessionManager?.indexTurnEmbeddingAsync?.(session.id, assistantTurn);
+
+          if (rpCtx.autoMedia) {
+            void (async () => {
+              const decisions = await resolveAutoMediaDecisions({
+                router,
+                autoMedia: rpCtx.autoMedia,
+                logger: api.logger,
+              });
+
+              if (decisions.imageStyleHint && router?.imageProvider?.generate) {
+                void deliverAutoImageForTelegram({
+                  router,
+                  routerCtx: rpCtx.routerCtx,
+                  styleHint: decisions.imageStyleHint,
+                  inboundMediaDir,
+                  telegramRuntime: api.runtime.channel?.telegram,
+                  logger: api.logger,
+                  accountId: rpCtx.autoMedia.accountId,
+                  messageThreadId: rpCtx.autoMedia.messageThreadId,
+                  apiConfig: api.config,
+                  materializeMedia: materializeMediaUrl,
+                });
+              }
+
+              if (decisions.shouldSpeak && router?.ttsProvider?.synthesize) {
+                void deliverAutoSpeakForTelegram({
+                  router,
+                  routerCtx: rpCtx.routerCtx,
+                  inboundMediaDir,
+                  telegramRuntime: api.runtime.channel?.telegram,
+                  logger: api.logger,
+                  accountId: rpCtx.autoMedia.accountId,
+                  messageThreadId: rpCtx.autoMedia.messageThreadId,
+                  apiConfig: api.config,
+                  materializeMedia: materializeMediaUrl,
+                });
+              }
+
+              if (decisions.videoStyleHint && router?.videoProvider?.generate) {
+                void deliverAutoVideoForTelegram({
+                  router,
+                  routerCtx: rpCtx.routerCtx,
+                  styleHint: decisions.videoStyleHint,
+                  inboundMediaDir,
+                  telegramRuntime: api.runtime.channel?.telegram,
+                  logger: api.logger,
+                  accountId: rpCtx.autoMedia.accountId,
+                  messageThreadId: rpCtx.autoMedia.messageThreadId,
+                  apiConfig: api.config,
+                  materializeMedia: materializeMediaUrl,
+                });
+              }
+            })();
+          }
+
+          // Keep rpCtx until delivery/write hooks have a chance to correlate this turn.
+          api.logger?.info?.(`[openclaw-rp] llm_output: appended assistant turn to session ${session.id}, length=${storedText.length}`);
         } catch (err) {
-          api.logger?.warn?.(`[openclaw-rp] llm_output texting normalization failed: ${String(err?.message || err)}`);
+          api.logger?.warn?.(`[openclaw-rp] llm_output hook failed: ${String(err?.message || err)}`);
         }
-
-        const assistantTurn = store.appendTurn({
-          sessionId: session.id,
-          role: "assistant",
-          content: storedText,
-          tokenEstimate: estimateTokens(storedText),
-        });
-        sessionManager?.updateTextingPersonaState?.(session.id, {
-          type: "assistant_turn",
-          content: storedText,
-        });
-        sessionManager?.indexTurnEmbeddingAsync?.(session.id, assistantTurn);
-
-        if (rpCtx.autoMedia) {
-          void (async () => {
-            const decisions = await resolveAutoMediaDecisions({
-              router,
-              autoMedia: rpCtx.autoMedia,
-              logger: api.logger,
-            });
-
-            if (decisions.imageStyleHint && router?.imageProvider?.generate) {
-              void deliverAutoImageForTelegram({
-                router,
-                routerCtx: rpCtx.routerCtx,
-                styleHint: decisions.imageStyleHint,
-                inboundMediaDir,
-                telegramRuntime: api.runtime.channel?.telegram,
-                logger: api.logger,
-                accountId: rpCtx.autoMedia.accountId,
-                messageThreadId: rpCtx.autoMedia.messageThreadId,
-                apiConfig: api.config,
-                materializeMedia: materializeMediaUrl,
-              });
-            }
-
-            if (decisions.shouldSpeak && router?.ttsProvider?.synthesize) {
-              void deliverAutoSpeakForTelegram({
-                router,
-                routerCtx: rpCtx.routerCtx,
-                inboundMediaDir,
-                telegramRuntime: api.runtime.channel?.telegram,
-                logger: api.logger,
-                accountId: rpCtx.autoMedia.accountId,
-                messageThreadId: rpCtx.autoMedia.messageThreadId,
-                apiConfig: api.config,
-                materializeMedia: materializeMediaUrl,
-              });
-            }
-
-            if (decisions.videoStyleHint && router?.videoProvider?.generate) {
-              void deliverAutoVideoForTelegram({
-                router,
-                routerCtx: rpCtx.routerCtx,
-                styleHint: decisions.videoStyleHint,
-                inboundMediaDir,
-                telegramRuntime: api.runtime.channel?.telegram,
-                logger: api.logger,
-                accountId: rpCtx.autoMedia.accountId,
-                messageThreadId: rpCtx.autoMedia.messageThreadId,
-                apiConfig: api.config,
-                materializeMedia: materializeMediaUrl,
-              });
-            }
-          })();
-        }
-
-        // Keep rpCtx until delivery/write hooks have a chance to correlate this turn.
-        api.logger?.info?.(`[openclaw-rp] llm_output: appended assistant turn to session ${session.id}, length=${storedText.length}`);
-      } catch (err) {
-        api.logger?.warn?.(`[openclaw-rp] llm_output hook failed: ${String(err?.message || err)}`);
-      }
-    });
+      });
+    } else {
+      api.logger?.warn?.(
+        `[openclaw-rp] llm_output hook disabled; set plugins.entries.${OPENCLAW_RP_PLUGIN_ID}.hooks.allowConversationAccess=true in openclaw.json to persist native assistant turns and enable native auto-media followups.`,
+      );
+    }
 
     registerOptionalHook(api, "message_sending", async (event, ctx) => {
       try {
@@ -3042,45 +3064,47 @@ export default {
       }
     });
 
-    registerOptionalHook(api, "reply_payload_sending", async (event, ctx) => {
-      try {
-        if (!isRpAgentAllowed(event, ctx)) {
-          return;
-        }
-        await ensureInitialized();
-        const pending = findPendingOutboundRewrite(pendingOutboundTextingRewrites, outboundRewriteTtlMs, event, ctx);
-        const rawContent = extractOutboundContent(event);
-        let normalized = pending?.content || "";
-
-        if (!normalized) {
-          const rpCtx = findRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, ctx);
-          const sessionId = rpCtx?.session?.id;
-          if (!sessionId || !rawContent) {
+    if (isReplyPayloadSendingHookEnabled(api)) {
+      registerOptionalHook(api, "reply_payload_sending", async (event, ctx) => {
+        try {
+          if (!isRpAgentAllowed(event, ctx)) {
             return;
           }
-          const textingPersona = getTextingPersonaForSession(store, sessionId);
-          if (!textingPersona) {
+          await ensureInitialized();
+          const pending = findPendingOutboundRewrite(pendingOutboundTextingRewrites, outboundRewriteTtlMs, event, ctx);
+          const rawContent = extractOutboundContent(event);
+          let normalized = pending?.content || "";
+
+          if (!normalized) {
+            const rpCtx = findRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, ctx);
+            const sessionId = rpCtx?.session?.id;
+            if (!sessionId || !rawContent) {
+              return;
+            }
+            const textingPersona = getTextingPersonaForSession(store, sessionId);
+            if (!textingPersona) {
+              return;
+            }
+            normalized = normalizeTextingPersonaOutput(rawContent, textingPersona.config, {
+              charName: textingPersona.charName,
+            });
+          }
+
+          if (!normalized || normalized === rawContent) {
             return;
           }
-          normalized = normalizeTextingPersonaOutput(rawContent, textingPersona.config, {
-            charName: textingPersona.charName,
-          });
-        }
 
-        if (!normalized || normalized === rawContent) {
-          return;
+          const payload = event?.payload && typeof event.payload === "object" ? event.payload : event;
+          const rewrittenPayload = rewriteReplyPayloadContent(payload, normalized);
+          api.logger?.info?.(`[openclaw-rp] reply_payload_sending: normalized texting persona payload ${rawContent.length}->${normalized.length}`);
+          return rewrittenPayload
+            ? { payload: rewrittenPayload, content: normalized }
+            : { content: normalized };
+        } catch (err) {
+          api.logger?.warn?.(`[openclaw-rp] reply_payload_sending hook failed: ${String(err?.message || err)}`);
         }
-
-        const payload = event?.payload && typeof event.payload === "object" ? event.payload : event;
-        const rewrittenPayload = rewriteReplyPayloadContent(payload, normalized);
-        api.logger?.info?.(`[openclaw-rp] reply_payload_sending: normalized texting persona payload ${rawContent.length}->${normalized.length}`);
-        return rewrittenPayload
-          ? { payload: rewrittenPayload, content: normalized }
-          : { content: normalized };
-      } catch (err) {
-        api.logger?.warn?.(`[openclaw-rp] reply_payload_sending hook failed: ${String(err?.message || err)}`);
-      }
-    });
+      });
+    }
 
     registerOptionalHook(api, "message_sent", async (event, ctx) => {
       try {

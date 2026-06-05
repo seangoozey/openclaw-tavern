@@ -80,6 +80,16 @@
             "default": "https://api.telegram.org"
           }
         }
+      },
+      "nativeHooks": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "replyPayloadSending": {
+            "type": "boolean",
+            "default": false
+          }
+        }
       }
     }
   }

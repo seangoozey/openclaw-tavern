@@ -58,6 +58,18 @@ export const openclawRpPluginConfigSchema = {
         },
       },
     },
+    nativeHooks: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        replyPayloadSending: {
+          type: "boolean",
+          default: false,
+          description:
+            "Opt in to the reply_payload_sending hook on OpenClaw builds that expose it. Disabled by default because some runtimes log unknown typed hook warnings.",
+        },
+      },
+    },
   },
 };
 
