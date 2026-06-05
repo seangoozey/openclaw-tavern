@@ -86,6 +86,48 @@ test("telegram runtime fallback prefers TELEGRAM_RP_BOT_TOKEN env", async () => 
   }
 });
 
+test("telegram runtime fallback prefers plugin config over env", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalRpToken = process.env.TELEGRAM_RP_BOT_TOKEN;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return { ok: true, result: { message_id: 44 } };
+      },
+    };
+  };
+
+  try {
+    process.env.TELEGRAM_RP_BOT_TOKEN = "env:token";
+    const runtime = resolveTelegramRuntime({
+      config: {
+        plugins: {
+          entries: {
+            "openclaw-rp-plugin": {
+              config: {
+                telegram: {
+                  botToken: "config:token",
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    await runtime.sendMessageTelegram("456", "hello");
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, "https://api.telegram.org/botconfig:token/sendMessage");
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv("TELEGRAM_RP_BOT_TOKEN", originalRpToken);
+  }
+});
+
 function restoreEnv(name, value) {
   if (value === undefined) {
     delete process.env[name];

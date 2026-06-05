@@ -2,11 +2,10 @@
  * Internationalization (i18n) module for OpenClaw RP plugin.
  *
  * Locale resolution priority:
- *   1. OPENCLAW_RP_LOCALE env var
+ *   1. `locale` field in ~/.openclaw/openclaw.json
  *   2. `locale` field in ~/.openclaw/openclaw-rp/provider.json
- *   3. `locale` field in ~/.openclaw/openclaw.json
- *   4. LANG env var (e.g. "zh_CN.UTF-8" → "zh")
- *   5. Default: "en"
+ *   3. OPENCLAW_RP_LOCALE env var
+ *   4. Default: "en"
  */
 
 const messages = {
@@ -57,17 +56,6 @@ const messages = {
 };
 
 /**
- * Detect locale from LANG environment variable.
- * "zh_CN.UTF-8" → "zh", "en_US.UTF-8" → "en"
- */
-function detectLocaleFromEnv() {
-  const lang = String(process.env.LANG || "").toLowerCase();
-  if (lang.startsWith("zh")) return "zh";
-  if (lang.startsWith("en")) return "en";
-  return "";
-}
-
-/**
  * Normalize a raw locale string to a supported locale key ("zh" | "en").
  * Returns empty string if the value is not recognized.
  */
@@ -88,9 +76,9 @@ let _resolvedLocale = "";
 export function resolveLocale(fileConfig, openclawConfig) {
   if (_resolvedLocale) return _resolvedLocale;
 
-  const fromEnv = normalizeLocale(process.env.OPENCLAW_RP_LOCALE);
-  if (fromEnv) {
-    _resolvedLocale = fromEnv;
+  const fromOpenClaw = normalizeLocale(openclawConfig?.locale);
+  if (fromOpenClaw) {
+    _resolvedLocale = fromOpenClaw;
     return _resolvedLocale;
   }
 
@@ -100,14 +88,13 @@ export function resolveLocale(fileConfig, openclawConfig) {
     return _resolvedLocale;
   }
 
-  const fromOpenClaw = normalizeLocale(openclawConfig?.locale);
-  if (fromOpenClaw) {
-    _resolvedLocale = fromOpenClaw;
+  const fromEnv = normalizeLocale(process.env.OPENCLAW_RP_LOCALE);
+  if (fromEnv) {
+    _resolvedLocale = fromEnv;
     return _resolvedLocale;
   }
 
-  const fromLang = detectLocaleFromEnv();
-  _resolvedLocale = fromLang || "en";
+  _resolvedLocale = "en";
   return _resolvedLocale;
 }
 

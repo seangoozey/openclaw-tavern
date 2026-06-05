@@ -186,7 +186,29 @@ Candidate commands:
 - `/rp texting-pause`
 - `/rp texting-schedule`
 
-### 8. Fake-Time Tests
+### 8. Logging / Runtime Observability
+
+Status: not started.
+
+The Docker runtime currently provides too little actionable plugin logging. Add explicit plugin-owned logging controls that prefer `openclaw.json` config over environment variables, with env vars only as fallback.
+
+Candidate controls:
+
+- `plugins.entries.openclaw-rp-plugin.config.debug.enabled`
+- `plugins.entries.openclaw-rp-plugin.config.debug.level` (`debug`, `info`, `warn`, `error`, `silent`)
+- `plugins.entries.openclaw-rp-plugin.config.debug.console`
+- `plugins.entries.openclaw-rp-plugin.config.debug.file`
+- fallback env vars such as `OPENCLAW_RP_LOG_LEVEL`, `OPENCLAW_RP_LOG_TO_CONSOLE`, and `OPENCLAW_RP_LOG_TO_FILE`
+
+Needed:
+
+- Send useful debug logs to container stdout/stderr when enabled.
+- Optionally write a plugin log file under the OpenClaw/plugin state directory.
+- Redact or omit full user/card/model text from debug logs by default.
+- Add startup logging for effective config source, selected provider, locale, Telegram fallback status, hook availability, and SQLite state path.
+- Add scheduler and delayed-message counters without dumping private content.
+
+### 9. Fake-Time Tests
 
 Status: not started.
 
@@ -199,13 +221,13 @@ Add deterministic tests for:
 - weekend proactive likelihood
 - relative date calculation
 
-### 9. Character Book V2 Support
+### 10. Character Book V2 Support
 
 Status: not started.
 
 Improve full Character Card V2/V3 support by importing `character_book` into lorebook or prompt context.
 
-### 10. Docker Smoke Test
+### 11. Docker Smoke Test
 
 Status: not started.
 
@@ -216,7 +238,7 @@ Verify in OpenClaw `v2026.5.27-beta.1` running in Linux Docker:
 - outbound payload shape matches rewrite assumptions.
 - normalized texting output is what the user sees.
 
-### 11. English User-Facing Output
+### 12. English User-Facing Output
 
 Status: not started.
 

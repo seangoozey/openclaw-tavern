@@ -168,7 +168,7 @@ reply before sending another autonomous message.
 
 ### Provider Resolution Priority
 
-1. OpenClaw global `api.config`
+1. OpenClaw global `api.config` / `~/.openclaw/openclaw.json`
 2. `~/.openclaw/openclaw-rp/provider.json`
 3. Environment variables (`OPENCLAW_RP_*`, `OPENAI_*`, `GEMINI_*`)
 
@@ -243,11 +243,10 @@ The plugin supports Chinese (`zh`) and English (`en`) for all user-facing messag
 
 Locale resolution priority:
 
-1. Environment variable `OPENCLAW_RP_LOCALE` (e.g. `en` or `zh`)
+1. `locale` field in `~/.openclaw/openclaw.json`
 2. `locale` field in `~/.openclaw/openclaw-rp/provider.json`
-3. `locale` field in `~/.openclaw/openclaw.json`
-4. System `LANG` environment variable (e.g. `en_US.UTF-8` → `en`)
-5. Default: `en`
+3. Environment variable `OPENCLAW_RP_LOCALE` (e.g. `en` or `zh`)
+4. Default: `en`
 
 Example — switch to English:
 

@@ -2,11 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { resetLocaleCache, resolveLocale, t } from "../src/openclaw/i18n.js";
 
-test("locale defaults to English when no config or language env is set", () => {
+test("locale defaults to English without explicit plugin locale", () => {
   const originalLocale = process.env.OPENCLAW_RP_LOCALE;
   const originalLang = process.env.LANG;
   delete process.env.OPENCLAW_RP_LOCALE;
-  delete process.env.LANG;
+  process.env.LANG = "zh_CN.UTF-8";
 
   try {
     resetLocaleCache();
@@ -24,6 +24,20 @@ test("locale still honors explicit Chinese config", () => {
   assert.equal(resolveLocale({ locale: "zh" }, {}), "zh");
   assert.notEqual(t("session_paused"), "RP session is paused (use /rp resume to continue).");
   resetLocaleCache();
+});
+
+test("openclaw.json locale wins over env locale", () => {
+  const originalLocale = process.env.OPENCLAW_RP_LOCALE;
+  process.env.OPENCLAW_RP_LOCALE = "zh";
+
+  try {
+    resetLocaleCache();
+    assert.equal(resolveLocale({}, { locale: "en" }), "en");
+    assert.equal(t("session_paused"), "RP session is paused (use /rp resume to continue).");
+  } finally {
+    restoreEnv("OPENCLAW_RP_LOCALE", originalLocale);
+    resetLocaleCache();
+  }
 });
 
 function restoreEnv(name, value) {

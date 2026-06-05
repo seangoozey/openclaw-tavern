@@ -1980,7 +1980,10 @@ export function resolveTelegramRuntime(api) {
     return nativeRuntime;
   }
 
-  const pluginConfig = getOpenClawRpPluginConfig(api?.config);
+  const openclawConfig = loadOpenClawFileConfig();
+  const rootConfig =
+    isObject(api?.config) && Object.keys(api.config).length > 0 ? api.config : openclawConfig;
+  const pluginConfig = getOpenClawRpPluginConfig(rootConfig);
   const telegramConfig = isObject(pluginConfig?.telegram) ? pluginConfig.telegram : {};
   const botToken = firstNonEmptyValue([
     telegramConfig.botToken,
@@ -2159,13 +2162,16 @@ function extractInheritedProviderConfig(apiConfig) {
 function resolveProviderConfig(apiConfig, overrides = {}) {
   // Try to read provider config from JSON file (most reliable for systemd-managed gateways)
   const fileConfig = loadProviderFileConfig();
-  const inherited = extractInheritedProviderConfig(apiConfig);
+  const openclawConfig = loadOpenClawFileConfig();
+  const rootConfig =
+    isObject(apiConfig) && Object.keys(apiConfig).length > 0 ? apiConfig : openclawConfig;
+  const inherited = extractInheritedProviderConfig(rootConfig);
   const forcedProvider = normalizeProviderHint(overrides.provider);
   const explicitProvider = normalizeProviderHint(
     firstNonEmptyValue([
-      process.env.OPENCLAW_RP_PROVIDER,
       fileConfig.provider,
       fileConfig.llm_provider,
+      process.env.OPENCLAW_RP_PROVIDER,
     ]),
   );
   const selectedProvider =
@@ -2175,13 +2181,13 @@ function resolveProviderConfig(apiConfig, overrides = {}) {
 
   const geminiApiKey =
     inherited.gemini.apiKey ||
-    process.env.OPENCLAW_RP_GEMINI_API_KEY ||
     fileConfig.gemini_api_key ||
+    process.env.OPENCLAW_RP_GEMINI_API_KEY ||
     process.env.GEMINI_API_KEY;
   const openaiApiKey =
     inherited.openai.apiKey ||
-    process.env.OPENCLAW_RP_OPENAI_API_KEY ||
     fileConfig.openai_api_key ||
+    process.env.OPENCLAW_RP_OPENAI_API_KEY ||
     process.env.OPENAI_API_KEY;
 
   const preferGemini =
@@ -2201,61 +2207,61 @@ function resolveProviderConfig(apiConfig, overrides = {}) {
       apiKey: geminiApiKey,
       model:
         inherited.gemini.model ||
-        process.env.OPENCLAW_RP_GEMINI_MODEL ||
         fileConfig.gemini_model ||
+        process.env.OPENCLAW_RP_GEMINI_MODEL ||
         process.env.GEMINI_MODEL,
       ttsModel:
         inherited.gemini.ttsModel ||
-        process.env.OPENCLAW_RP_GEMINI_TTS_MODEL ||
         fileConfig.gemini_tts_model ||
+        process.env.OPENCLAW_RP_GEMINI_TTS_MODEL ||
         process.env.GEMINI_TTS_MODEL,
       ttsVoice:
         inherited.gemini.ttsVoice ||
-        process.env.OPENCLAW_RP_GEMINI_TTS_VOICE ||
         fileConfig.gemini_tts_voice ||
+        process.env.OPENCLAW_RP_GEMINI_TTS_VOICE ||
         process.env.GEMINI_TTS_VOICE,
       imageModel:
         overrides.imageModel ||
         inherited.gemini.imageModel ||
-        process.env.OPENCLAW_RP_GEMINI_IMAGE_MODEL ||
         fileConfig.gemini_image_model ||
+        process.env.OPENCLAW_RP_GEMINI_IMAGE_MODEL ||
         process.env.GEMINI_IMAGE_MODEL,
       videoModel:
-        process.env.OPENCLAW_RP_GEMINI_VIDEO_MODEL ||
         fileConfig.gemini_video_model ||
+        process.env.OPENCLAW_RP_GEMINI_VIDEO_MODEL ||
         process.env.GEMINI_VIDEO_MODEL,
       embeddingModel:
         inherited.gemini.embeddingModel ||
-        process.env.OPENCLAW_RP_GEMINI_EMBEDDING_MODEL ||
         fileConfig.gemini_embedding_model ||
+        process.env.OPENCLAW_RP_GEMINI_EMBEDDING_MODEL ||
         process.env.GEMINI_EMBEDDING_MODEL,
       chatTimeoutMs: toPositiveNumber(
-        process.env.OPENCLAW_RP_GEMINI_CHAT_TIMEOUT_MS ||
-          fileConfig.gemini_chat_timeout_ms ||
+        fileConfig.gemini_chat_timeout_ms ||
+          process.env.OPENCLAW_RP_GEMINI_CHAT_TIMEOUT_MS ||
           process.env.GEMINI_CHAT_TIMEOUT_MS,
         60000,
       ),
       ttsTimeoutMs: toPositiveNumber(
-        process.env.OPENCLAW_RP_GEMINI_TTS_TIMEOUT_MS ||
-          fileConfig.gemini_tts_timeout_ms ||
+        fileConfig.gemini_tts_timeout_ms ||
+          process.env.OPENCLAW_RP_GEMINI_TTS_TIMEOUT_MS ||
           process.env.GEMINI_TTS_TIMEOUT_MS,
         90000,
       ),
       imageTimeoutMs: toPositiveNumber(
-        process.env.OPENCLAW_RP_GEMINI_IMAGE_TIMEOUT_MS ||
-          fileConfig.gemini_image_timeout_ms ||
+        fileConfig.gemini_image_timeout_ms ||
+          process.env.OPENCLAW_RP_GEMINI_IMAGE_TIMEOUT_MS ||
           process.env.GEMINI_IMAGE_TIMEOUT_MS,
         120000,
       ),
       videoTimeoutMs: toPositiveNumber(
-        process.env.OPENCLAW_RP_GEMINI_VIDEO_TIMEOUT_MS ||
-          fileConfig.gemini_video_timeout_ms ||
+        fileConfig.gemini_video_timeout_ms ||
+          process.env.OPENCLAW_RP_GEMINI_VIDEO_TIMEOUT_MS ||
           process.env.GEMINI_VIDEO_TIMEOUT_MS,
         300000,
       ),
       embeddingTimeoutMs: toPositiveNumber(
-        process.env.OPENCLAW_RP_GEMINI_EMBEDDING_TIMEOUT_MS ||
-          fileConfig.gemini_embedding_timeout_ms ||
+        fileConfig.gemini_embedding_timeout_ms ||
+          process.env.OPENCLAW_RP_GEMINI_EMBEDDING_TIMEOUT_MS ||
           process.env.GEMINI_EMBEDDING_TIMEOUT_MS,
         30000,
       ),
@@ -2267,61 +2273,61 @@ function resolveProviderConfig(apiConfig, overrides = {}) {
       apiKey: geminiApiKey,
       model:
         inherited.gemini.model ||
-        process.env.OPENCLAW_RP_GEMINI_MODEL ||
         fileConfig.gemini_model ||
+        process.env.OPENCLAW_RP_GEMINI_MODEL ||
         process.env.GEMINI_MODEL,
       ttsModel:
         inherited.gemini.ttsModel ||
-        process.env.OPENCLAW_RP_GEMINI_TTS_MODEL ||
         fileConfig.gemini_tts_model ||
+        process.env.OPENCLAW_RP_GEMINI_TTS_MODEL ||
         process.env.GEMINI_TTS_MODEL,
       ttsVoice:
         inherited.gemini.ttsVoice ||
-        process.env.OPENCLAW_RP_GEMINI_TTS_VOICE ||
         fileConfig.gemini_tts_voice ||
+        process.env.OPENCLAW_RP_GEMINI_TTS_VOICE ||
         process.env.GEMINI_TTS_VOICE,
       imageModel:
         overrides.imageModel ||
         inherited.gemini.imageModel ||
-        process.env.OPENCLAW_RP_GEMINI_IMAGE_MODEL ||
         fileConfig.gemini_image_model ||
+        process.env.OPENCLAW_RP_GEMINI_IMAGE_MODEL ||
         process.env.GEMINI_IMAGE_MODEL,
       videoModel:
-        process.env.OPENCLAW_RP_GEMINI_VIDEO_MODEL ||
         fileConfig.gemini_video_model ||
+        process.env.OPENCLAW_RP_GEMINI_VIDEO_MODEL ||
         process.env.GEMINI_VIDEO_MODEL,
       embeddingModel:
         inherited.gemini.embeddingModel ||
-        process.env.OPENCLAW_RP_GEMINI_EMBEDDING_MODEL ||
         fileConfig.gemini_embedding_model ||
+        process.env.OPENCLAW_RP_GEMINI_EMBEDDING_MODEL ||
         process.env.GEMINI_EMBEDDING_MODEL,
       chatTimeoutMs: toPositiveNumber(
-        process.env.OPENCLAW_RP_GEMINI_CHAT_TIMEOUT_MS ||
-          fileConfig.gemini_chat_timeout_ms ||
+        fileConfig.gemini_chat_timeout_ms ||
+          process.env.OPENCLAW_RP_GEMINI_CHAT_TIMEOUT_MS ||
           process.env.GEMINI_CHAT_TIMEOUT_MS,
         60000,
       ),
       ttsTimeoutMs: toPositiveNumber(
-        process.env.OPENCLAW_RP_GEMINI_TTS_TIMEOUT_MS ||
-          fileConfig.gemini_tts_timeout_ms ||
+        fileConfig.gemini_tts_timeout_ms ||
+          process.env.OPENCLAW_RP_GEMINI_TTS_TIMEOUT_MS ||
           process.env.GEMINI_TTS_TIMEOUT_MS,
         90000,
       ),
       imageTimeoutMs: toPositiveNumber(
-        process.env.OPENCLAW_RP_GEMINI_IMAGE_TIMEOUT_MS ||
-          fileConfig.gemini_image_timeout_ms ||
+        fileConfig.gemini_image_timeout_ms ||
+          process.env.OPENCLAW_RP_GEMINI_IMAGE_TIMEOUT_MS ||
           process.env.GEMINI_IMAGE_TIMEOUT_MS,
         120000,
       ),
       videoTimeoutMs: toPositiveNumber(
-        process.env.OPENCLAW_RP_GEMINI_VIDEO_TIMEOUT_MS ||
-          fileConfig.gemini_video_timeout_ms ||
+        fileConfig.gemini_video_timeout_ms ||
+          process.env.OPENCLAW_RP_GEMINI_VIDEO_TIMEOUT_MS ||
           process.env.GEMINI_VIDEO_TIMEOUT_MS,
         300000,
       ),
       embeddingTimeoutMs: toPositiveNumber(
-        process.env.OPENCLAW_RP_GEMINI_EMBEDDING_TIMEOUT_MS ||
-          fileConfig.gemini_embedding_timeout_ms ||
+        fileConfig.gemini_embedding_timeout_ms ||
+          process.env.OPENCLAW_RP_GEMINI_EMBEDDING_TIMEOUT_MS ||
           process.env.GEMINI_EMBEDDING_TIMEOUT_MS,
         30000,
       ),
@@ -2336,61 +2342,61 @@ function resolveProviderConfig(apiConfig, overrides = {}) {
     apiKey: openaiApiKey,
     baseUrl:
       inherited.openai.baseUrl ||
-      process.env.OPENCLAW_RP_OPENAI_BASE_URL ||
       fileConfig.openai_base_url ||
+      process.env.OPENCLAW_RP_OPENAI_BASE_URL ||
       process.env.OPENAI_BASE_URL,
     model:
       inherited.openai.model ||
-      process.env.OPENCLAW_RP_OPENAI_MODEL ||
       fileConfig.openai_model ||
+      process.env.OPENCLAW_RP_OPENAI_MODEL ||
       process.env.OPENAI_MODEL,
     ttsModel:
       inherited.openai.ttsModel ||
-      process.env.OPENCLAW_RP_OPENAI_TTS_MODEL ||
       fileConfig.openai_tts_model ||
+      process.env.OPENCLAW_RP_OPENAI_TTS_MODEL ||
       process.env.OPENAI_TTS_MODEL,
     imageModel:
       overrides.imageModel ||
       inherited.openai.imageModel ||
-      process.env.OPENCLAW_RP_OPENAI_IMAGE_MODEL ||
       fileConfig.openai_image_model ||
+      process.env.OPENCLAW_RP_OPENAI_IMAGE_MODEL ||
       process.env.OPENAI_IMAGE_MODEL,
     videoModel:
-      process.env.OPENCLAW_RP_OPENAI_VIDEO_MODEL ||
       fileConfig.openai_video_model ||
+      process.env.OPENCLAW_RP_OPENAI_VIDEO_MODEL ||
       process.env.OPENAI_VIDEO_MODEL,
     embeddingModel:
       inherited.openai.embeddingModel ||
-      process.env.OPENCLAW_RP_OPENAI_EMBEDDING_MODEL ||
       fileConfig.openai_embedding_model ||
+      process.env.OPENCLAW_RP_OPENAI_EMBEDDING_MODEL ||
       process.env.OPENAI_EMBEDDING_MODEL,
     chatTimeoutMs: toPositiveNumber(
-      process.env.OPENCLAW_RP_OPENAI_CHAT_TIMEOUT_MS ||
-        fileConfig.openai_chat_timeout_ms ||
+      fileConfig.openai_chat_timeout_ms ||
+        process.env.OPENCLAW_RP_OPENAI_CHAT_TIMEOUT_MS ||
         process.env.OPENAI_CHAT_TIMEOUT_MS,
       30000,
     ),
     ttsTimeoutMs: toPositiveNumber(
-      process.env.OPENCLAW_RP_OPENAI_TTS_TIMEOUT_MS ||
-        fileConfig.openai_tts_timeout_ms ||
+      fileConfig.openai_tts_timeout_ms ||
+        process.env.OPENCLAW_RP_OPENAI_TTS_TIMEOUT_MS ||
         process.env.OPENAI_TTS_TIMEOUT_MS,
       15000,
     ),
     imageTimeoutMs: toPositiveNumber(
-      process.env.OPENCLAW_RP_OPENAI_IMAGE_TIMEOUT_MS ||
-        fileConfig.openai_image_timeout_ms ||
+      fileConfig.openai_image_timeout_ms ||
+        process.env.OPENCLAW_RP_OPENAI_IMAGE_TIMEOUT_MS ||
         process.env.OPENAI_IMAGE_TIMEOUT_MS,
       60000,
     ),
     videoTimeoutMs: toPositiveNumber(
-      process.env.OPENCLAW_RP_OPENAI_VIDEO_TIMEOUT_MS ||
-        fileConfig.openai_video_timeout_ms ||
+      fileConfig.openai_video_timeout_ms ||
+        process.env.OPENCLAW_RP_OPENAI_VIDEO_TIMEOUT_MS ||
         process.env.OPENAI_VIDEO_TIMEOUT_MS,
       300000,
     ),
     embeddingTimeoutMs: toPositiveNumber(
-      process.env.OPENCLAW_RP_OPENAI_EMBEDDING_TIMEOUT_MS ||
-        fileConfig.openai_embedding_timeout_ms ||
+      fileConfig.openai_embedding_timeout_ms ||
+        process.env.OPENCLAW_RP_OPENAI_EMBEDDING_TIMEOUT_MS ||
         process.env.OPENAI_EMBEDDING_TIMEOUT_MS,
       30000,
     ),
@@ -3097,7 +3103,7 @@ export default {
     api.on("before_message_write", (event, ctx) => {
       try {
         if (!isRpAgentAllowed(event, ctx)) return;
-        if (!initialized) return;
+        if (!store || !router) return;
         const rpCtx = findRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, ctx);
         if (!rpCtx) return;
         const session = store.getSessionById(rpCtx.session.id);
@@ -3154,6 +3160,10 @@ export default {
         } catch {
           // ignore close failures during shutdown
         }
+        db = null;
+        store = null;
+        sessionManager = null;
+        router = null;
       },
     });
   },
