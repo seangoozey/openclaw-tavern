@@ -6,7 +6,7 @@
  *   2. `locale` field in ~/.openclaw/openclaw-rp/provider.json
  *   3. `locale` field in ~/.openclaw/openclaw.json
  *   4. LANG env var (e.g. "zh_CN.UTF-8" → "zh")
- *   5. Default: "zh"
+ *   5. Default: "en"
  */
 
 const messages = {
@@ -107,7 +107,7 @@ export function resolveLocale(fileConfig, openclawConfig) {
   }
 
   const fromLang = detectLocaleFromEnv();
-  _resolvedLocale = fromLang || "zh";
+  _resolvedLocale = fromLang || "en";
   return _resolvedLocale;
 }
 
@@ -118,14 +118,14 @@ export function resetLocaleCache() {
 
 /**
  * Get a translated message by key.
- * Falls back to Chinese if the key is not found in the current locale.
+ * Falls back to English if the key is not found in the current locale.
  *
  * @param {string} key - Message key (e.g. "session_paused")
  * @param {string} [locale] - Override locale; if omitted uses the resolved locale
  * @returns {string}
  */
 export function t(key, locale) {
-  const lang = locale || _resolvedLocale || "zh";
-  const dict = messages[lang] || messages.zh;
-  return dict[key] ?? messages.zh[key] ?? key;
+  const lang = locale || _resolvedLocale || "en";
+  const dict = messages[lang] || messages.en;
+  return dict[key] ?? messages.en[key] ?? messages.zh[key] ?? key;
 }

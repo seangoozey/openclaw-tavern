@@ -1333,7 +1333,9 @@ async function sendTelegramFollowup({ ctx, text, logger }) {
   }
   const sendMessageTelegram = ctx.telegramRuntime?.sendMessageTelegram;
   if (typeof sendMessageTelegram !== "function") {
-    logger?.warn?.("[openclaw-rp] telegram runtime sendMessageTelegram is unavailable");
+    logger?.warn?.(
+      "[openclaw-rp] telegram send unavailable: OpenClaw did not expose runtime.channel.telegram.sendMessageTelegram and no Telegram Bot API fallback is configured. Set TELEGRAM_RP_BOT_TOKEN or plugins.entries.openclaw-rp-plugin.config.telegram.botToken for text follow-ups.",
+    );
     return false;
   }
 
@@ -1909,6 +1911,93 @@ function firstNonEmptyValue(values) {
     }
   }
   return undefined;
+}
+
+export function createTelegramBotApiRuntime({ botToken, apiBaseUrl = "https://api.telegram.org", timeoutMs = 15000 } = {}) {
+  const token = asString(botToken);
+  if (!token) {
+    return null;
+  }
+  const base = asString(apiBaseUrl) || "https://api.telegram.org";
+  const normalizedBase = base.replace(/\/$/, "");
+
+  return {
+    async sendMessageTelegram(chatId, text, options = {}) {
+      const target = asString(chatId);
+      const message = asString(text);
+      if (options.mediaUrl) {
+        throw new Error("Telegram Bot API fallback only supports text messages");
+      }
+      if (!target || !message) {
+        return null;
+      }
+      if (typeof fetch !== "function") {
+        throw new Error("Telegram Bot API fallback requires global fetch");
+      }
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const payload = {
+          chat_id: target,
+          text: message,
+          parse_mode: options.textMode === "html" ? "HTML" : undefined,
+          message_thread_id:
+            typeof options.messageThreadId === "number" ? options.messageThreadId : undefined,
+        };
+        for (const key of Object.keys(payload)) {
+          if (payload[key] === undefined) {
+            delete payload[key];
+          }
+        }
+
+        const resp = await fetch(`${normalizedBase}/bot${token}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || data?.ok === false) {
+          const description = data?.description ? `: ${data.description}` : "";
+          throw new Error(`Telegram sendMessage failed with HTTP ${resp.status}${description}`);
+        }
+        return {
+          chatId: target,
+          messageId: data?.result?.message_id,
+          raw: data,
+        };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
+}
+
+export function resolveTelegramRuntime(api) {
+  const nativeRuntime = api?.runtime?.channel?.telegram;
+  if (typeof nativeRuntime?.sendMessageTelegram === "function") {
+    return nativeRuntime;
+  }
+
+  const pluginConfig = getOpenClawRpPluginConfig(api?.config);
+  const telegramConfig = isObject(pluginConfig?.telegram) ? pluginConfig.telegram : {};
+  const botToken = firstNonEmptyValue([
+    telegramConfig.botToken,
+    telegramConfig.bot_token,
+    process.env.TELEGRAM_RP_BOT_TOKEN,
+    process.env.OPENCLAW_RP_TELEGRAM_BOT_TOKEN,
+    process.env.TELEGRAM_BOT_TOKEN,
+  ]);
+  const apiBaseUrl = firstNonEmptyValue([
+    telegramConfig.apiBaseUrl,
+    telegramConfig.api_base_url,
+    process.env.OPENCLAW_RP_TELEGRAM_API_BASE_URL,
+    process.env.TELEGRAM_API_BASE_URL,
+    "https://api.telegram.org",
+  ]);
+
+  return createTelegramBotApiRuntime({ botToken, apiBaseUrl });
 }
 
 function pickConfigValue(source, paths) {
@@ -2547,7 +2636,7 @@ export default {
               api.logger?.info?.(`[openclaw-rp] command end: recorded recently ended for channel ${endChannelKey}`);
             }
           }
-          scheduleFollowupIfNeeded(response, ctx, api.logger, api.runtime.channel?.telegram);
+          scheduleFollowupIfNeeded(response, ctx, api.logger, resolveTelegramRuntime(api));
           const mediaRaw = response?.data?.audio_url || response?.data?.image_url || response?.data?.video_url;
           const mediaUrl = mediaRaw ? await materializeMediaUrl(mediaRaw, inboundMediaDir) : undefined;
 
@@ -3037,13 +3126,13 @@ export default {
             await runDelayedMessageSchedulerOnce({
               store,
               sessionManager,
-              telegramRuntime: api.runtime.channel?.telegram,
+              telegramRuntime: resolveTelegramRuntime(api),
               logger: api.logger,
             });
             await runCompanionSchedulerOnce({
               store,
               router,
-              telegramRuntime: api.runtime.channel?.telegram,
+              telegramRuntime: resolveTelegramRuntime(api),
               logger: api.logger,
             });
           } catch (err) {

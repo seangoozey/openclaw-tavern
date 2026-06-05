@@ -216,6 +216,19 @@ Verify in OpenClaw `v2026.5.27-beta.1` running in Linux Docker:
 - outbound payload shape matches rewrite assumptions.
 - normalized texting output is what the user sees.
 
+### 11. English User-Facing Output
+
+Status: not started.
+
+The live OpenClaw smoke test shows `/rp` responses still contain Chinese labels and mojibake-looking text, for example the import success and session-ready messages. For this project, user-facing command output should be English unless localization is explicitly enabled.
+
+Needed:
+
+- Audit `/rp` command responses for Chinese text and mojibake.
+- Replace default command output with English strings.
+- Keep localization support only if it is explicit and reliable.
+- Add tests for import/start/session messages so English output does not regress.
+
 ## Maintenance Rule
 
 Update this file whenever the texting-persona roadmap, implementation status, schema, or priorities change.

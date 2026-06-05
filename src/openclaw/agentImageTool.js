@@ -39,6 +39,25 @@ export const openclawRpPluginConfigSchema = {
       description:
         "Optional list of OpenClaw agent IDs allowed to use RP commands and hooks. Empty means all agents.",
     },
+    telegram: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        botToken: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Optional Telegram Bot API token used only as a fallback when OpenClaw does not expose a native Telegram send runtime to plugins.",
+        },
+        apiBaseUrl: {
+          type: "string",
+          minLength: 1,
+          default: "https://api.telegram.org",
+          description:
+            "Telegram Bot API base URL for the fallback sender.",
+        },
+      },
+    },
   },
 };
 

@@ -47,12 +47,16 @@ function tokenize(raw) {
   return tokens;
 }
 
+function normalizeOptionDashes(content) {
+  return String(content || "").replace(/(^|\s)[\u2012\u2013\u2014\u2015](?=[A-Za-z][\w-]*(?:\s|$))/g, "$1--");
+}
+
 export function parseRpCommand(content) {
   if (!content || !content.startsWith("/rp")) {
     return null;
   }
 
-  const tokens = tokenize(content.trim());
+  const tokens = tokenize(normalizeOptionDashes(content).trim());
   if (tokens.length === 1) {
     return { command: "help", args: [], options: {} };
   }

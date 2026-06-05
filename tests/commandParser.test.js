@@ -18,3 +18,9 @@ test("parse quoted Windows paths without treating path separators as escapes", (
   const parsed = parseRpCommand('/rp import-card --file "C:\\tmp\\card.json"');
   assert.equal(parsed.options.file, "C:\\tmp\\card.json");
 });
+
+test("parse smart dash option prefixes pasted from rich text", () => {
+  const parsed = parseRpCommand("/rp start —card card_W8BKmSym");
+  assert.equal(parsed.command, "start");
+  assert.equal(parsed.options.card, "card_W8BKmSym");
+});

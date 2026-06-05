@@ -53,7 +53,7 @@ test("deliverAutoImageForTelegram deletes placeholder then sends media", async (
 
   assert.equal(result.ok, true);
   assert.equal(sendCalls.length, 2);
-  assert.equal(sendCalls[0].text, "图片生成中");
+  assert.equal(sendCalls[0].text, "Generating image…");
   assert.equal(sendCalls[1].options.mediaUrl, "https://example.com/look.png");
   assert.equal(actionCalls.length, 1);
   assert.equal(actionCalls[0].action, "delete");
@@ -68,7 +68,7 @@ test("deliverAutoImageForTelegram edits placeholder on failure", async () => {
   const telegramRuntime = {
     async sendMessageTelegram(chatId, text) {
       assert.equal(chatId, "123");
-      assert.equal(text, "图片生成中");
+      assert.equal(text, "Generating image…");
       return { chatId, messageId: "51" };
     },
     messageActions: {
@@ -104,7 +104,7 @@ test("deliverAutoImageForTelegram edits placeholder on failure", async () => {
   assert.deepEqual(actionCalls[0].params, {
     chatId: "123",
     messageId: 51,
-    message: "图片生成失败",
+    message: "Image generation failed",
   });
 });
 
@@ -156,7 +156,7 @@ test("deliverAutoSpeakForTelegram deletes placeholder then sends voice", async (
 
   assert.equal(result.ok, true);
   assert.equal(sendCalls.length, 2);
-  assert.equal(sendCalls[0].text, "语音生成中");
+  assert.equal(sendCalls[0].text, "Generating voice…");
   assert.equal(sendCalls[1].options.mediaUrl, "https://example.com/voice.mp3");
   assert.equal(sendCalls[1].options.asVoice, true);
   assert.equal(actionCalls.length, 1);
@@ -168,7 +168,7 @@ test("deliverAutoSpeakForTelegram edits placeholder on failure", async () => {
   const telegramRuntime = {
     async sendMessageTelegram(chatId, text) {
       assert.equal(chatId, "123");
-      assert.equal(text, "语音生成中");
+      assert.equal(text, "Generating voice…");
       return { chatId, messageId: "71" };
     },
     messageActions: {
@@ -205,6 +205,6 @@ test("deliverAutoSpeakForTelegram edits placeholder on failure", async () => {
   assert.deepEqual(actionCalls[0].params, {
     chatId: "123",
     messageId: 71,
-    message: "语音生成失败",
+    message: "Voice generation failed",
   });
 });

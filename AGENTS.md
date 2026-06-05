@@ -112,6 +112,7 @@ When exporting V3 PNG cards for OpenClaw compatibility testing, embed the card J
 - `src/store/inMemoryStore.js`: Test/in-memory persistence.
 - `src/importers/cardImporter.js`: Card import mapping.
 - `docs/TEXTING_PERSONA_EXTENSION.md`: Schema and behavior contract for `data.extensions["openclaw/texting_persona"]`.
+- `wip.md`: Working notes for managing feature updates, implementation thoughts, and follow-up ideas.
 - `tests/`: Node test suite.
 
 ## Current Texting Persona Implementation

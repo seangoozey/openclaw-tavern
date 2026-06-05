@@ -187,6 +187,9 @@ Add plugin config under your OpenClaw config:
             "enabled": true,
             "provider": "openai",
             "imageModel": "gpt-image-1"
+          },
+          "telegram": {
+            "botToken": "123456:replace-with-your-bot-token"
           }
         }
       }
@@ -199,6 +202,7 @@ Add plugin config under your OpenClaw config:
 - `agentImage.provider`: `inherit`, `openai`, or `gemini`
 - `agentImage.imageModel`: overrides only the agent image-generation model, without changing the `/rp` dialogue model
 - `allowedAgents`: optional list of OpenClaw agent IDs allowed to use `/rp` commands and RP hooks. Empty or omitted means all agents.
+- `telegram.botToken`: optional fallback Bot API token for text-only follow-ups when OpenClaw does not expose `runtime.channel.telegram.sendMessageTelegram` to plugins. You can also set `TELEGRAM_RP_BOT_TOKEN`; `OPENCLAW_RP_TELEGRAM_BOT_TOKEN` and `TELEGRAM_BOT_TOKEN` remain compatibility aliases.
 
 To let an OpenClaw agent use it, also allow `rp_generate_image` in the agent tool config. On OpenClaw `2026.3.x`, the recommended config is:
 
@@ -243,7 +247,7 @@ Locale resolution priority:
 2. `locale` field in `~/.openclaw/openclaw-rp/provider.json`
 3. `locale` field in `~/.openclaw/openclaw.json`
 4. System `LANG` environment variable (e.g. `en_US.UTF-8` → `en`)
-5. Default: `zh`
+5. Default: `en`
 
 Example — switch to English:
 
