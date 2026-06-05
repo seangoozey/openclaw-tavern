@@ -128,10 +128,10 @@ function formatAgentImageConfigText(config = {}) {
   const provider = String(config?.provider || "inherit").trim() || "inherit";
   const imageModel = String(config?.imageModel || "").trim();
   return [
-    "🖼️ Agent 生图配置",
-    `• enabled: ${enabled ? "true" : "false"}`,
-    `• provider: ${provider}`,
-    `• imageModel: ${imageModel || "(provider default)"}`,
+    "Agent image config",
+    `- enabled: ${enabled ? "true" : "false"}`,
+    `- provider: ${provider}`,
+    `- imageModel: ${imageModel || "(provider default)"}`,
   ].join("\n");
 }
 
@@ -152,26 +152,26 @@ function normalizeAttachment(attachment) {
 
 function helpText() {
   return [
-    "🎭 RP 命令列表：",
+    "RP commands:",
     "",
-    "📥 导入",
-    "  /rp import-card + 附件 (或 --url/--file)",
-    "  /rp import-preset + 附件 (或 --url/--file)",
-    "  /rp import-lorebook + 附件 (或 --url/--file)",
-    "  💡 OpenClaw 可以先发文件，再运行 /rp import-*",
+    "Import",
+    "  /rp import-card + attachment (or --url/--file)",
+    "  /rp import-preset + attachment (or --url/--file)",
+    "  /rp import-lorebook + attachment (or --url/--file)",
+    "  Tip: send a file first, then run /rp import-* if your channel supports attachment fallback.",
     "",
-    "📋 资产管理",
+    "Asset management",
     "  /rp list-assets [--type card|preset|lorebook] [--search \"...\"] [--page N]",
-    "  /rp show-asset <名称或ID>",
+    "  /rp show-asset <name_or_id>",
     "  /rp delete-asset <ID> --confirm",
     "",
-    "🎮 会话控制",
-    "  /rp start --card <名称或ID> [--preset <名称或ID>] [--lorebook <名称或ID> ...]",
-    "  /rp session     查看当前会话",
-    "  /rp retry [--edit \"...\"]  重新生成回复",
-    "  /rp speak        语音合成最后一条回复",
+    "Session control",
+    "  /rp start --card <name_or_id> [--preset <name_or_id>] [--lorebook <name_or_id> ...]",
+    "  /rp session     Show the current session",
+    "  /rp retry [--edit \"...\"]  Regenerate the last reply",
+    "  /rp speak        Generate TTS for the latest assistant reply",
     "  /rp image [--prompt \"...\"] [--style \"...\"]",
-    "  /rp video [--prompt \"...\"] [--style \"...\"]   生成 2 秒短视频",
+    "  /rp video [--prompt \"...\"] [--style \"...\"]",
     "  /rp agent-image [--provider inherit|openai|gemini] [--model \"...\"] [--clear-model] [--enable|--disable]",
     "  /rp companion-nudge [--reason \"...\"] [--idle-minutes N] [--mode balanced|checkin|question|report] [--force]",
     "  /rp companion-auto [--enable|--disable] [--min-hours N] [--max-per-day N] [--quiet-hours HH:MM-HH:MM]",
@@ -328,7 +328,7 @@ function buildStartIntroText(cardName, cardDetail) {
   };
 
   const charName = cardName || "Character";
-  const lines = [`🎭 角色已就绪：${charName}`];
+  const lines = [`Character ready: ${charName}`];
   const rawDesc = firstNonEmptyString([cardDetail?.description]);
   const rawScenario = firstNonEmptyString([cardDetail?.scenario]);
   const rawPersonality = firstNonEmptyString([cardDetail?.personality]);
@@ -337,16 +337,16 @@ function buildStartIntroText(cardName, cardDetail) {
   const personality = normalizeSummary(rawPersonality, 160);
 
   if (description) {
-    lines.push(`📖 简介：${replacePlaceholders(description, { charName })}`);
+    lines.push(`Description: ${replacePlaceholders(description, { charName })}`);
   }
   if (scenario) {
-    lines.push(`🌍 场景：${replacePlaceholders(scenario, { charName })}`);
+    lines.push(`Scenario: ${replacePlaceholders(scenario, { charName })}`);
   }
   if (!description && personality) {
-    lines.push(`💫 人设：${replacePlaceholders(personality, { charName })}`);
+    lines.push(`Personality: ${replacePlaceholders(personality, { charName })}`);
   }
   lines.push("");
-  lines.push("直接发送消息开始对话。");
+  lines.push("Send a message to start chatting.");
 
   return lines.join("\n");
 }
@@ -726,19 +726,19 @@ export class CommandRouter {
       }
     }
 
-    const typeLabel = { card: "🎭 角色卡", preset: "⚙️ 预设", lorebook: "📚 知识书" }[type] || type;
+    const typeLabel = { card: "card", preset: "preset", lorebook: "lorebook" }[type] || type;
     const allWarnings = [...(imported.warnings || []), ...duplicateWarnings];
     const lines = [
-      `✅ ${typeLabel}导入成功`,
-      `• 名称：${name}`,
-      `• ID：${asset.id}`,
-      `• 格式：${imported.sourceFormat}`,
+      `${typeLabel} imported successfully`,
+      `- name: ${name}`,
+      `- id: ${asset.id}`,
+      `- format: ${imported.sourceFormat}`,
     ];
     if (imported.mappedFields?.length > 0) {
-      lines.push(`• 已映射字段：${imported.mappedFields.join(", ")}`);
+      lines.push(`- mapped fields: ${imported.mappedFields.join(", ")}`);
     }
     if (allWarnings.length > 0) {
-      lines.push(`⚠️ ${allWarnings.join("; ")}`);
+      lines.push(`Warning: ${allWarnings.join("; ")}`);
     }
 
     return ok(lines.join("\n"), {
@@ -766,18 +766,16 @@ export class CommandRouter {
     });
 
     if (result.items.length === 0) {
-      return ok("📋 没有资产。使用 /rp import-card、/rp import-preset 或 /rp import-lorebook 来导入。", {
+      return ok("No assets found. Use /rp import-card, /rp import-preset, or /rp import-lorebook to import one.", {
         items: [],
         page: result.page,
         total_pages: result.totalPages,
       });
     }
 
-    const typeIcon = { card: "🎭", preset: "⚙️", lorebook: "📚" };
-    const lines = [`📋 资产列表（第 ${result.page}/${result.totalPages} 页）`];
+    const lines = [`Assets (page ${result.page}/${result.totalPages})`];
     for (const it of result.items) {
-      const icon = typeIcon[it.type] || "📄";
-      lines.push(`${icon} ${it.name} (${it.type} v${it.version})`);
+      lines.push(`${it.name} (${it.type} v${it.version})`);
       lines.push(`   ID: ${it.id}`);
     }
 
@@ -800,24 +798,22 @@ export class CommandRouter {
     const full = this.store.getAssetDetail(asset.id);
     const detail = full.detail || {};
 
-    const typeIcon = { card: "🎭", preset: "⚙️", lorebook: "📚" };
-    const icon = typeIcon[full.type] || "📄";
     const lines = [
-      `${icon} ${full.name}`,
-      `• 类型：${full.type}`,
-      `• 版本：v${full.version}`,
-      `• ID：${full.id}`,
-      `• 格式：${full.source_format}`,
+      `${full.name}`,
+      `- type: ${full.type}`,
+      `- version: v${full.version}`,
+      `- id: ${full.id}`,
+      `- format: ${full.source_format}`,
     ];
 
     if (full.type === "card") {
-      if (detail.description) lines.push(`• 简介：${stripHtml(detail.description).slice(0, 200)}`);
-      if (detail.personality) lines.push(`• 人设：${stripHtml(detail.personality).slice(0, 200)}`);
-      if (detail.scenario) lines.push(`• 场景：${stripHtml(detail.scenario).slice(0, 200)}`);
+      if (detail.description) lines.push(`- description: ${stripHtml(detail.description).slice(0, 200)}`);
+      if (detail.personality) lines.push(`- personality: ${stripHtml(detail.personality).slice(0, 200)}`);
+      if (detail.scenario) lines.push(`- scenario: ${stripHtml(detail.scenario).slice(0, 200)}`);
     } else if (full.type === "preset") {
-      if (detail.temperature != null) lines.push(`• 温度：${detail.temperature}`);
-      if (detail.max_tokens != null) lines.push(`• 最大 Token：${detail.max_tokens}`);
-      if (detail.top_p != null) lines.push(`• Top-P：${detail.top_p}`);
+      if (detail.temperature != null) lines.push(`- temperature: ${detail.temperature}`);
+      if (detail.max_tokens != null) lines.push(`- max tokens: ${detail.max_tokens}`);
+      if (detail.top_p != null) lines.push(`- top-p: ${detail.top_p}`);
     }
 
     return ok(lines.join("\n"), {
@@ -951,19 +947,18 @@ export class CommandRouter {
     }
 
     const bundle = this.store.getSessionAssetBundle(session.id);
-    const statusIcon = { active: "▶️", paused: "⏸", ended: "⏹", summarizing: "📝" };
     const lines = [
-      `📋 当前会话`,
-      `• 角色：${bundle.card.name}`,
-      `• 预设：${bundle.preset.name}`,
-      `• 状态：${statusIcon[bundle.session.status] || ""} ${bundle.session.status}`,
-      `• 对话轮数：${bundle.session.turn_count}`,
-      `• 摘要版本：${bundle.session.summary_version}`,
+      "Current session",
+      `- character: ${bundle.card.name}`,
+      `- preset: ${bundle.preset.name}`,
+      `- status: ${bundle.session.status}`,
+      `- turns: ${bundle.session.turn_count}`,
+      `- summary version: ${bundle.session.summary_version}`,
     ];
     if (bundle.lorebooks.length > 0) {
-      lines.push(`• 知识书：${bundle.lorebooks.map((x) => x.name).join(", ")}`);
+      lines.push(`- lorebooks: ${bundle.lorebooks.map((x) => x.name).join(", ")}`);
     }
-    lines.push(`• ID：${bundle.session.id}`);
+    lines.push(`- id: ${bundle.session.id}`);
 
     return ok(lines.join("\n"), {
       session_id: bundle.session.id,
@@ -986,13 +981,13 @@ export class CommandRouter {
     const updated = this.store.updateSessionStatus({ sessionId: session.id, status: targetStatus });
 
     if (targetStatus === RP_SESSION_STATUS.ENDED) {
-      return ok(`⏹ 会话已结束（共 ${updated.turn_count} 轮对话）`, {
+      return ok(`Session ended after ${updated.turn_count} turns`, {
         session_id: updated.id,
         total_turns: updated.turn_count,
       });
     }
 
-    const statusLabel = { paused: "⏸ 会话已暂停", active: "▶️ 会话已恢复" };
+    const statusLabel = { paused: "Session paused", active: "Session resumed" };
     return ok(statusLabel[targetStatus] || `Session ${targetStatus}`, {
       session_id: updated.id,
       status: updated.status,
@@ -1138,7 +1133,7 @@ export class CommandRouter {
     });
     this.sessionManager?.logger?.info?.("rp.image.done", { user_id: ctx.userId, session_id: session.id });
 
-    return ok("🖼️ 图片已生成", {
+    return ok("Image generated", {
       image_url: result?.imageUrl,
       prompt_used: String(scenePrompt || "").slice(0, 200),
     });
@@ -1232,7 +1227,7 @@ export class CommandRouter {
     });
     this.sessionManager?.logger?.info?.("rp.video.done", { user_id: ctx.userId, session_id: session.id });
 
-    return ok("🎬 视频已生成", {
+    return ok("Video generated", {
       video_url: result?.videoUrl,
       prompt_used: String(scenePrompt || "").slice(0, 200),
       duration_seconds: durationSeconds,
@@ -1292,7 +1287,7 @@ export class CommandRouter {
 
     const next = await this.updateAgentImageConfig(patch);
     const lines = [
-      "✅ Agent 生图配置已更新",
+      "Agent image config updated",
       formatAgentImageConfigText(next),
     ];
     return ok(lines.join("\n"), {
@@ -1324,7 +1319,7 @@ export class CommandRouter {
       const wait = Number(result.requiredIdleMinutes || idleMinutes);
       const nowIdle = Number(result.idleMinutes || 0).toFixed(1);
       return ok(
-        `⏱ 暂不触发主动关怀（当前空闲 ${nowIdle} 分钟，阈值 ${wait} 分钟）。可使用 --force 立即触发。`,
+        `Companion nudge skipped. Current idle time is ${nowIdle} minutes; threshold is ${wait} minutes. Use --force to trigger now.`,
         {
           ignored: true,
           reason: result.reason,

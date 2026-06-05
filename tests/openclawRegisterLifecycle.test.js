@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import registerModule from "../src/openclaw/register.js";
@@ -160,5 +160,260 @@ test("reply_payload_sending hook registers when native hook config opts in", asy
   } finally {
     services.get("openclaw-rp-sqlite")?.stop();
     await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("/rp init manages host IDENTITY.md and SOUL.md blocks", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-workspace-"));
+  const commands = new Map();
+  const services = new Map();
+  const hooks = new Map();
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        services,
+        hooks,
+        config: {
+          agents: {
+            list: [{ id: "main", default: true, workspace: workspaceDir }],
+          },
+        },
+      }),
+    );
+
+    const rp = commands.get("rp");
+    assert.ok(rp);
+
+    let result = await rp.handler({ commandBody: "/rp init" });
+    assert.equal(result.isError, undefined);
+    assert.match(result.text, /OpenClaw RP host initialized/);
+
+    const identity = await readFile(path.join(workspaceDir, "IDENTITY.md"), "utf8");
+    const soul = await readFile(path.join(workspaceDir, "SOUL.md"), "utf8");
+    assert.match(identity, /openclaw-rp-plugin:identity:begin/);
+    assert.match(identity, /Your persistent identity is not any imported character card/);
+    assert.match(soul, /openclaw-rp-plugin:host:begin/);
+    assert.match(soul, /Active RP sessions are owned by the OpenClaw RP plugin/);
+
+    result = await rp.handler({ commandBody: "/rp init --status" });
+    assert.equal(result.isError, undefined);
+    assert.match(result.text, /host identity block: yes/);
+    assert.match(result.text, /host behavior block: yes/);
+
+    result = await rp.handler({ commandBody: "/rp init --restore" });
+    assert.equal(result.isError, undefined);
+    assert.match(result.text, /host persona blocks removed/);
+
+    const restoredIdentity = await readFile(path.join(workspaceDir, "IDENTITY.md"), "utf8");
+    const restoredSoul = await readFile(path.join(workspaceDir, "SOUL.md"), "utf8");
+    assert.doesNotMatch(restoredIdentity, /openclaw-rp-plugin:identity:begin/);
+    assert.doesNotMatch(restoredSoul, /openclaw-rp-plugin:host:begin/);
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("owned native RP hook claims active session turn and caches duplicate hooks", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));
+  const commands = new Map();
+  const hooks = new Map();
+  const services = new Map();
+  const cardPath = path.join(assetDir, "nina.json");
+  const originalFetch = globalThis.fetch;
+  let chatCalls = 0;
+  await writeFile(
+    cardPath,
+    JSON.stringify({
+      name: "Nina",
+      description: "Nina answers like a dry-humored night owl.",
+      first_mes: "still up?",
+    }),
+    "utf8",
+  );
+
+  globalThis.fetch = async (url) => {
+    const rawUrl = String(url);
+    if (rawUrl.endsWith("/chat/completions")) {
+      chatCalls += 1;
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "barely. what's up?" } }],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    if (rawUrl.endsWith("/embeddings")) {
+      return new Response(
+        JSON.stringify({
+          data: [{ embedding: Array.from({ length: 16 }, () => 0.1) }],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    throw new Error(`unexpected fetch ${rawUrl}`);
+  };
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        hooks,
+        services,
+        config: {
+          openai: {
+            apiKey: "test-key",
+            baseUrl: "https://rp-hook-test.invalid/v1",
+            model: "test-chat",
+            embeddingModel: "test-embed",
+          },
+          plugins: {
+            entries: {
+              "openclaw-rp-plugin": {
+                config: {
+                  nativeHooks: {
+                    inboundClaim: true,
+                    beforeAgentReply: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+    assert.equal(hooks.has("inbound_claim"), true);
+    assert.equal(hooks.has("before_agent_reply"), true);
+
+    const rp = commands.get("rp");
+    assert.ok(rp);
+    const baseCtx = {
+      channel: "telegram",
+      channelId: "telegram",
+      conversationId: "555",
+      senderId: "u1",
+      from: "u1",
+      commandBody: "",
+    };
+
+    let result = await rp.handler({
+      ...baseCtx,
+      commandBody: `/rp import-card --file "${cardPath}"`,
+    });
+    assert.equal(result.isError, undefined);
+    result = await rp.handler({
+      ...baseCtx,
+      commandBody: "/rp start --card Nina",
+    });
+    assert.equal(result.isError, undefined);
+
+    const event = {
+      id: "msg-1",
+      content: "you awake?",
+      metadata: {
+        senderId: "u1",
+      },
+    };
+    const hookCtx = {
+      channelId: "telegram",
+      conversationId: "555",
+      senderId: "u1",
+      sessionKey: "agent:main:telegram:direct:555",
+    };
+    const claimed = await hooks.get("inbound_claim")(event, hookCtx);
+    assert.equal(claimed.claimed, true);
+    assert.equal(claimed.block, true);
+    assert.equal(claimed.content, "barely. what's up?");
+
+    const duplicate = await hooks.get("before_agent_reply")(event, hookCtx);
+    assert.equal(duplicate.claimed, true);
+    assert.equal(duplicate.content, "barely. what's up?");
+    assert.equal(chatCalls, 1);
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    globalThis.fetch = originalFetch;
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(assetDir, { recursive: true, force: true });
+  }
+});
+
+test("before_prompt_build recovers active RP session when message_received did not run first", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));
+  const commands = new Map();
+  const hooks = new Map();
+  const services = new Map();
+  const cardPath = path.join(assetDir, "vera.json");
+  await writeFile(
+    cardPath,
+    JSON.stringify({
+      name: "Vera",
+      description: "Vera is a terse night-shift dispatcher.",
+      first_mes: "You still awake?",
+    }),
+    "utf8",
+  );
+
+  try {
+    registerModule.register(makeApi({ stateDir, commands, hooks, services }));
+    const rp = commands.get("rp");
+    assert.ok(rp);
+
+    const baseCtx = {
+      channel: "telegram",
+      channelId: "telegram",
+      conversationId: "12345",
+      senderId: "u1",
+      from: "u1",
+      commandBody: "",
+    };
+    let result = await rp.handler({
+      ...baseCtx,
+      commandBody: `/rp import-card --file "${cardPath}"`,
+    });
+    assert.equal(result.isError, undefined);
+
+    result = await rp.handler({
+      ...baseCtx,
+      commandBody: "/rp start --card Vera",
+    });
+    assert.equal(result.isError, undefined);
+
+    const beforePrompt = hooks.get("before_prompt_build");
+    assert.equal(typeof beforePrompt, "function");
+    const injected = await beforePrompt(
+      {
+        content: "yeah, barely",
+        metadata: {
+          senderId: "u1",
+        },
+      },
+      {
+        channelId: "telegram",
+        conversationId: "12345",
+        senderId: "u1",
+        sessionKey: "agent:main:telegram:direct:12345",
+      },
+    );
+
+    assert.match(injected.systemPrompt, /Vera is a terse night-shift dispatcher/);
+    assert.match(injected.prependContext, /yeah, barely/);
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(assetDir, { recursive: true, force: true });
   }
 });

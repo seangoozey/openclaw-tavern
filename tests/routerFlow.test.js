@@ -17,6 +17,52 @@ function makeCtx(content, extras = {}) {
   };
 }
 
+function assertEnglishCommandText(value) {
+  const text = String(value || "");
+  assert.doesNotMatch(text, /[\u4e00-\u9fff]/);
+  assert.doesNotMatch(text, /[ðâåèæçé]/);
+}
+
+test("core command responses default to English", async () => {
+  const plugin = createRPPlugin({
+    modelProvider: {
+      async generate() {
+        return { content: "assistant reply" };
+      },
+    },
+  });
+
+  let r = await plugin.hooks.message_received(makeCtx("/rp help"));
+  assert.equal(r.response.ok, true);
+  assertEnglishCommandText(r.response.data.text);
+  assert.match(r.response.data.text, /RP commands/);
+
+  r = await plugin.hooks.message_received(makeCtx("/rp list-assets"));
+  assert.equal(r.response.ok, true);
+  assertEnglishCommandText(r.response.message);
+
+  r = await plugin.hooks.message_received(
+    makeCtx("/rp import-card", {
+      attachments: [{ filename: "alice.json", buffer: Buffer.from(JSON.stringify({ name: "Alice", description: "role" })) }],
+    }),
+  );
+  assert.equal(r.response.ok, true);
+  assertEnglishCommandText(r.response.message);
+  const cardId = r.response.data.asset_id;
+
+  r = await plugin.hooks.message_received(makeCtx(`/rp start --card ${cardId}`));
+  assert.equal(r.response.ok, true);
+  assertEnglishCommandText(r.response.data.text);
+
+  r = await plugin.hooks.message_received(makeCtx("/rp session"));
+  assert.equal(r.response.ok, true);
+  assertEnglishCommandText(r.response.message);
+
+  r = await plugin.hooks.message_received(makeCtx("/rp pause"));
+  assert.equal(r.response.ok, true);
+  assertEnglishCommandText(r.response.message);
+});
+
 test("start session and chat flow", async () => {
   const plugin = createRPPlugin({
     modelProvider: {
@@ -48,7 +94,7 @@ test("start session and chat flow", async () => {
   r = await plugin.hooks.message_received(makeCtx(`/rp start --card ${cardId} --preset ${presetId}`));
   assert.equal(r.response.ok, true);
   assert.equal(typeof r.response.data.text, "string");
-  assert.equal(r.response.data.text.includes("角色已就绪"), true);
+  assert.equal(r.response.data.text.includes("Character ready"), true);
   assert.equal(r.response.data.followup_text, "hi");
 
   r = await plugin.hooks.message_received(makeCtx("hello there"));

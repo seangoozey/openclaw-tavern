@@ -22,8 +22,11 @@ import {
 } from "../utils/imageIntent.js";
 import {
   buildManagedSoulOverride,
+  getManagedHostPersonaStatus,
   resolvePersonaWorkspaceDir,
+  restoreManagedHostPersona,
   restoreSoul,
+  syncManagedHostPersona,
   syncManagedSoulOverride,
 } from "./agentPersona.js";
 import { resolveLocale, t } from "./i18n.js";
@@ -605,6 +608,17 @@ function buildHookRouterContext(event, hookCtx) {
     content: asString(event?.content),
     attachments: [],
   };
+}
+
+function extractNativeUserContent(event, ctx) {
+  return (
+    asString(event?.content) ||
+    asString(event?.message?.content) ||
+    asString(event?.input?.content) ||
+    asString(event?.prompt?.content) ||
+    asString(ctx?.content) ||
+    ""
+  );
 }
 
 function resolveHookThreadId(event, hookCtx) {
@@ -1194,6 +1208,90 @@ async function handleRestoreAgentPersonaCommand({ ctx, apiConfig, logger }) {
   };
 }
 
+function formatHostPersonaStatus(status) {
+  const yesNo = (value) => (value ? "yes" : "no");
+  const lines = [
+    "OpenClaw RP host persona status",
+    "",
+    `Workspace: ${status.workspaceDir || "(unresolved)"}`,
+    `IDENTITY.md: ${status.identity?.path || "(unresolved)"}`,
+    `- exists: ${yesNo(status.identity?.exists)}`,
+    `- host identity block: ${yesNo(status.identity?.host_block_present)}`,
+    `- modified: ${status.identity?.modified_at || "(missing)"}`,
+    `SOUL.md: ${status.soul?.path || "(unresolved)"}`,
+    `- exists: ${yesNo(status.soul?.exists)}`,
+    `- host behavior block: ${yesNo(status.soul?.host_block_present)}`,
+    `- legacy character override block: ${yesNo(status.soul?.character_override_present)}`,
+    `- modified: ${status.soul?.modified_at || "(missing)"}`,
+  ];
+  return lines.join("\n");
+}
+
+async function handleInitCommand({ ctx, apiConfig, logger, options = {} }) {
+  const workspaceDir = resolvePersonaWorkspaceDir({
+    workspaceDir: ctx.workspaceDir,
+    apiConfig,
+  });
+
+  if (options.status) {
+    const status = await getManagedHostPersonaStatus({ workspaceDir });
+    return {
+      ok: true,
+      message: "OpenClaw RP host persona status",
+      data: {
+        ...status,
+        text: formatHostPersonaStatus(status),
+      },
+    };
+  }
+
+  if (options.restore) {
+    const result = await restoreManagedHostPersona({ workspaceDir });
+    const status = await getManagedHostPersonaStatus({ workspaceDir });
+    logger?.info?.(`[openclaw-rp] restored host persona blocks workspace=${workspaceDir}`);
+    return {
+      ok: true,
+      message: result.restored
+        ? "OpenClaw RP host persona restored"
+        : "No OpenClaw RP host persona blocks found",
+      data: {
+        ...status,
+        restored: result.restored,
+        restore_result: result,
+        text: [
+          result.restored
+            ? "OpenClaw RP host persona blocks removed."
+            : "No OpenClaw RP host persona blocks were found.",
+          "",
+          formatHostPersonaStatus(status),
+        ].join("\n"),
+      },
+    };
+  }
+
+  const result = await syncManagedHostPersona({ workspaceDir });
+  const status = await getManagedHostPersonaStatus({ workspaceDir });
+  logger?.info?.(`[openclaw-rp] initialized host persona workspace=${workspaceDir}`);
+  return {
+    ok: true,
+    message: "OpenClaw RP host initialized",
+    data: {
+      ...status,
+      updated: result.updated,
+      sync_result: result,
+      text: [
+        "OpenClaw RP host initialized.",
+        "",
+        formatHostPersonaStatus(status),
+        "",
+        "Next:",
+        "- Import a card with /rp import-card",
+        "- Start a session with /rp start --card <name_or_id>",
+      ].join("\n"),
+    },
+  };
+}
+
 function normalizeMediaType(value) {
   return asString(value) || undefined;
 }
@@ -1210,6 +1308,33 @@ function firstMediaValue(...values) {
     }
   }
   return "";
+}
+
+function appendNativeUserTurnOnce({ store, sessionManager, session, content }) {
+  const text = asString(content);
+  if (!store || !session?.id || !text) {
+    return null;
+  }
+  const recent = typeof store.getRecentTurns === "function"
+    ? store.getRecentTurns(session.id, 1)
+    : [];
+  const latest = Array.isArray(recent) ? recent[recent.length - 1] : null;
+  if (latest?.role === "user" && latest?.content === text) {
+    return latest;
+  }
+  const userTurn = store.appendTurn({
+    sessionId: session.id,
+    role: "user",
+    content: text,
+    tokenEstimate: estimateTokens(text),
+  });
+  sessionManager?.updateTextingPersonaState?.(session.id, {
+    type: "user_turn",
+    content: text,
+  });
+  store.resetCompanionConsecutiveCount?.(session.id);
+  sessionManager?.indexTurnEmbeddingAsync?.(session.id, userTurn);
+  return userTurn;
 }
 
 function storeEventMediaToCache(event, mediaCache) {
@@ -2019,6 +2144,14 @@ function isReplyPayloadSendingHookEnabled(api) {
   return pluginConfig?.nativeHooks?.replyPayloadSending === true;
 }
 
+function isNativeHookEnabled(api, key) {
+  const openclawConfig = loadOpenClawFileConfig();
+  const rootConfig =
+    isObject(api?.config) && Object.keys(api.config).length > 0 ? api.config : openclawConfig;
+  const pluginConfig = getOpenClawRpPluginConfig(rootConfig);
+  return pluginConfig?.nativeHooks?.[key] === true;
+}
+
 function pickConfigValue(source, paths) {
   const values = [];
   for (const pathTokens of paths) {
@@ -2445,8 +2578,10 @@ export default {
     const activeRpContextByAgentSessionKey = new Map();
     const activeRpContextByChannel = new Map();
     const pendingOutboundTextingRewrites = new Map();
+    const ownedNativeTurnCache = new Map();
     const rpContextTtlMs = 120000;
     const outboundRewriteTtlMs = 120000;
+    const ownedNativeTurnTtlMs = 120000;
     // Track channels where an RP session recently ended so that
     // before_prompt_build can inject a context-break even after the
     // rpContext maps have been cleaned up.
@@ -2572,6 +2707,110 @@ export default {
       sessionManager = plugin.services.sessionManager;
     }
 
+    function cleanupOwnedNativeTurnCache(now = Date.now()) {
+      for (const [key, item] of ownedNativeTurnCache) {
+        if (now - item.at > ownedNativeTurnTtlMs) {
+          ownedNativeTurnCache.delete(key);
+        }
+      }
+    }
+
+    function buildOwnedNativeTurnKey({ hookName, event, ctx, routerCtx, session }) {
+      const eventId =
+        asString(event?.id) ||
+        asString(event?.messageId) ||
+        asString(event?.message_id) ||
+        asString(event?.metadata?.messageId) ||
+        asString(event?.metadata?.message_id);
+      const sessionId = asString(session?.id);
+      if (eventId) {
+        return `${sessionId}:${eventId}`;
+      }
+      return [
+        sessionId,
+        asString(ctx?.sessionKey),
+        asString(routerCtx.channelType),
+        asString(routerCtx.platformContextId),
+        asString(routerCtx.channelId),
+        asString(routerCtx.userId),
+        asString(routerCtx.content),
+      ].join("|") || `${hookName}:${Date.now()}`;
+    }
+
+    function buildSyntheticNativeReply(text, response) {
+      const content = asString(text);
+      return {
+        handled: true,
+        claimed: true,
+        claim: true,
+        block: true,
+        stop: true,
+        content,
+        text: content,
+        message: {
+          content,
+          text: content,
+        },
+        reply: {
+          content,
+          text: content,
+        },
+        syntheticReply: {
+          content,
+          text: content,
+        },
+        response,
+      };
+    }
+
+    async function handleOwnedNativeRpTurn(hookName, event, ctx) {
+      if (!isRpAgentAllowed(event, ctx)) {
+        return undefined;
+      }
+      await ensureInitialized();
+      const content = extractNativeUserContent(event, ctx);
+      if (!content || content.startsWith("/")) {
+        return undefined;
+      }
+
+      const routerCtx = buildHookRouterContext(
+        {
+          ...(event || {}),
+          content,
+        },
+        ctx || {},
+      );
+      const channelSessionKey = buildChannelSessionKey(routerCtx);
+      const session = store.getSessionByChannelKey(channelSessionKey);
+      if (!session) {
+        return undefined;
+      }
+      if (session.status === "ended") {
+        return undefined;
+      }
+
+      cleanupOwnedNativeTurnCache();
+      const cacheKey = buildOwnedNativeTurnKey({ hookName, event, ctx, routerCtx, session });
+      const cached = ownedNativeTurnCache.get(cacheKey);
+      if (cached) {
+        api.logger?.info?.(`[openclaw-rp] ${hookName}: reusing owned RP reply for session ${session.id}`);
+        return cached.result;
+      }
+
+      const response = await router.handleMessage(routerCtx);
+      if (!response) {
+        return undefined;
+      }
+      const text = asString(response?.data?.content) || formatResponseText(response);
+      const result = buildSyntheticNativeReply(text, response);
+      ownedNativeTurnCache.set(cacheKey, {
+        at: Date.now(),
+        result,
+      });
+      api.logger?.info?.(`[openclaw-rp] ${hookName}: claimed owned RP turn for session ${session.id}`);
+      return result;
+    }
+
     if (typeof api.registerTool === "function") {
       api.registerTool(
         createAgentImageTool({
@@ -2603,6 +2842,18 @@ export default {
         try {
           const commandBody = String(ctx.commandBody || "/rp");
           const parsedCommand = parseRpCommand(commandBody);
+          if (parsedCommand?.command === "init") {
+            const response = await handleInitCommand({
+              ctx,
+              apiConfig: api.config,
+              logger: api.logger,
+              options: parsedCommand.options || {},
+            });
+            return {
+              text: formatResponseText(response),
+            };
+          }
+
           if (parsedCommand?.command === "sync-agent-persona") {
             const response = await handleSyncAgentPersonaCommand({
               store,
@@ -2640,7 +2891,7 @@ export default {
               ...response,
               data: {
                 ...response.data,
-                text: `${response.data.text}\n  /rp sync-agent-persona     ${t("help_sync_agent_persona")}\n  /rp restore-agent-persona  ${t("help_restore_agent_persona")}`,
+                text: `${response.data.text}\n  /rp init [--status|--restore]  Initialize or inspect the RP host persona\n  /rp sync-agent-persona     ${t("help_sync_agent_persona")}\n  /rp restore-agent-persona  ${t("help_restore_agent_persona")}`,
               },
             };
           }
@@ -2677,6 +2928,42 @@ export default {
         }
       },
     });
+
+    if (isNativeHookEnabled(api, "inboundClaim")) {
+      registerOptionalHook(api, "inbound_claim", async (event, ctx) => {
+        try {
+          return await handleOwnedNativeRpTurn("inbound_claim", event, ctx);
+        } catch (err) {
+          api.logger?.warn?.(`[openclaw-rp] inbound_claim hook failed: ${String(err?.message || err)}`);
+          const rpErr = asRPError(err);
+          return buildSyntheticNativeReply(formatResponseText(rpErr.toResponse()), rpErr.toResponse());
+        }
+      });
+    }
+
+    if (isNativeHookEnabled(api, "beforeAgentReply")) {
+      registerOptionalHook(api, "before_agent_reply", async (event, ctx) => {
+        try {
+          return await handleOwnedNativeRpTurn("before_agent_reply", event, ctx);
+        } catch (err) {
+          api.logger?.warn?.(`[openclaw-rp] before_agent_reply hook failed: ${String(err?.message || err)}`);
+          const rpErr = asRPError(err);
+          return buildSyntheticNativeReply(formatResponseText(rpErr.toResponse()), rpErr.toResponse());
+        }
+      });
+    }
+
+    if (isNativeHookEnabled(api, "beforeAgentRun")) {
+      registerOptionalHook(api, "before_agent_run", async (event, ctx) => {
+        try {
+          return await handleOwnedNativeRpTurn("before_agent_run", event, ctx);
+        } catch (err) {
+          api.logger?.warn?.(`[openclaw-rp] before_agent_run hook failed: ${String(err?.message || err)}`);
+          const rpErr = asRPError(err);
+          return buildSyntheticNativeReply(formatResponseText(rpErr.toResponse()), rpErr.toResponse());
+        }
+      });
+    }
 
     api.on("message_received", async (event, hookCtx) => {
       try {
@@ -2761,19 +3048,9 @@ export default {
           router?.modelProvider?.generate &&
           shouldClassifyMediaIntent(content);
 
-        // Append user turn to RP session
-        const userTurn = store.appendTurn({
-          sessionId: session.id,
-          role: "user",
-          content,
-          tokenEstimate: estimateTokens(content),
-        });
-        sessionManager?.updateTextingPersonaState?.(session.id, {
-          type: "user_turn",
-          content,
-        });
-        store.resetCompanionConsecutiveCount?.(session.id);
-        sessionManager?.indexTurnEmbeddingAsync?.(session.id, userTurn);
+        // Append user turn to RP session. This is idempotent because some
+        // OpenClaw builds can run before_prompt_build before message_received.
+        appendNativeUserTurnOnce({ store, sessionManager, session, content });
 
         // Store RP context for before_prompt_build to pick up
         // Include conversationId in channelKey to isolate concurrent conversations.
@@ -2821,7 +3098,62 @@ export default {
           asString(ctx?.conversationId),
         ].filter(Boolean).join(":").toLowerCase();
         api.logger?.info?.(`[openclaw-rp] before_prompt_build: ctx keys channelId=${asString(ctx?.channelId)} conversationId=${asString(ctx?.conversationId)} sessionKey=${asString(ctx?.sessionKey)} channelKey=${debugChannelKey} mapSize=${activeRpContextByChannel.size}`);
-        const rpCtx = findRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, ctx);
+        let rpCtx = findRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, ctx);
+        if (!rpCtx) {
+          const routerCtx = buildHookRouterContext(
+            {
+              ...(event || {}),
+              content: extractNativeUserContent(event, ctx),
+            },
+            ctx || {},
+          );
+          const peers = new Set();
+          for (const source of [
+            ctx?.conversationId,
+            event?.metadata?.originatingTo,
+            event?.metadata?.to,
+            event?.from,
+            routerCtx.platformContextId,
+          ]) {
+            for (const peer of candidatePeers(source)) {
+              peers.add(peer);
+            }
+          }
+          const recoveredSession = resolveActiveSessionForPending(store, db, {
+            routerCtx,
+            peers: [...peers],
+          });
+          const recoveredStatus = asString(recoveredSession?.status).toLowerCase();
+          if (recoveredSession && recoveredStatus === "active") {
+            const recoveredContent = extractNativeUserContent(event, ctx);
+            appendNativeUserTurnOnce({
+              store,
+              sessionManager,
+              session: recoveredSession,
+              content: recoveredContent,
+            });
+            const recoveredChannelKey = [
+              asString(ctx?.channelId || routerCtx.channelType),
+              asString(ctx?.conversationId || routerCtx.platformContextId),
+            ].filter(Boolean).join(":").toLowerCase();
+            rpCtx = {
+              at: Date.now(),
+              session: recoveredSession,
+              routerCtx,
+              userContent: recoveredContent,
+              autoMedia: null,
+            };
+            cleanupRpContextMaps(activeRpContextByAgentSessionKey, activeRpContextByChannel, rpContextTtlMs);
+            rememberRpContext(
+              activeRpContextByAgentSessionKey,
+              activeRpContextByChannel,
+              rpCtx,
+              recoveredChannelKey,
+              asString(ctx?.sessionKey),
+            );
+            api.logger?.info?.(`[openclaw-rp] before_prompt_build: recovered RP context for session ${recoveredSession.id}, channelKey=${recoveredChannelKey}`);
+          }
+        }
         if (!rpCtx) {
           // Check if this channel recently had an RP session end.
           const endedKey = findRecentlyEndedKey(recentlyEndedRpChannels, ctx, recentlyEndedTtlMs);
@@ -3188,6 +3520,7 @@ export default {
         store = null;
         sessionManager = null;
         router = null;
+        ownedNativeTurnCache.clear();
       },
     });
   },

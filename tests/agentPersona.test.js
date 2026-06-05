@@ -5,8 +5,11 @@ import path from "node:path";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import {
   buildManagedSoulOverride,
+  getManagedHostPersonaStatus,
   mergeManagedSoulOverride,
   resolvePersonaWorkspaceDir,
+  restoreManagedHostPersona,
+  syncManagedHostPersona,
   syncManagedSoulOverride,
 } from "../src/openclaw/agentPersona.js";
 
@@ -61,6 +64,51 @@ test("syncManagedSoulOverride updates existing managed block in place", async ()
   assert.match(content, /new persona/);
   assert.doesNotMatch(content, /\nold\n/);
   assert.match(content, /# Existing Soul/);
+});
+
+test("syncManagedHostPersona writes identity and host soul blocks without dropping existing content", async () => {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-host-"));
+  const identityPath = path.join(workspaceDir, "IDENTITY.md");
+  const soulPath = path.join(workspaceDir, "SOUL.md");
+  await writeFile(identityPath, "# Existing Identity\n\nKeep me.", "utf8");
+  await writeFile(soulPath, "# Existing Soul\n\nKeep this too.", "utf8");
+
+  const result = await syncManagedHostPersona({ workspaceDir });
+  const identity = await readFile(identityPath, "utf8");
+  const soul = await readFile(soulPath, "utf8");
+  const status = await getManagedHostPersonaStatus({ workspaceDir });
+
+  assert.equal(result.updated, true);
+  assert.match(identity, /openclaw-rp-plugin:identity:begin/);
+  assert.match(identity, /OpenClaw Tavern Host/);
+  assert.match(identity, /# Existing Identity/);
+  assert.match(soul, /openclaw-rp-plugin:host:begin/);
+  assert.match(soul, /OpenClaw RP Host Behavior/);
+  assert.match(soul, /# Existing Soul/);
+  assert.equal(status.identity.host_block_present, true);
+  assert.equal(status.soul.host_block_present, true);
+  assert.equal(status.soul.character_override_present, false);
+});
+
+test("restoreManagedHostPersona removes only host blocks", async () => {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-host-"));
+  await syncManagedHostPersona({ workspaceDir });
+  const soulPath = path.join(workspaceDir, "SOUL.md");
+  await writeFile(
+    soulPath,
+    `${await readFile(soulPath, "utf8")}\n<!-- openclaw-rp-plugin:soul:begin -->\nlegacy\n<!-- openclaw-rp-plugin:soul:end -->\n`,
+    "utf8",
+  );
+
+  const result = await restoreManagedHostPersona({ workspaceDir });
+  const status = await getManagedHostPersonaStatus({ workspaceDir });
+  const soul = await readFile(soulPath, "utf8");
+
+  assert.equal(result.restored, true);
+  assert.equal(status.identity.host_block_present, false);
+  assert.equal(status.soul.host_block_present, false);
+  assert.equal(status.soul.character_override_present, true);
+  assert.match(soul, /openclaw-rp-plugin:soul:begin/);
 });
 
 test("resolvePersonaWorkspaceDir prefers explicit workspaceDir", () => {

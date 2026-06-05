@@ -121,8 +121,11 @@ Note: install entry names vary by gateway version (plugin manager button vs admi
 - `/rp agent-image [--provider inherit|openai|gemini] [--model "..."] [--clear-model] [--enable|--disable]`
 - `/rp companion-nudge [--reason "..."] [--idle-minutes N] [--mode balanced|checkin|question|report] [--force]`
 - `/rp companion-auto [--enable|--disable] [--min-hours N] [--max-per-day N] [--quiet-hours HH:MM-HH:MM] [--idle-minutes N] [--mode balanced|checkin|question|report]`
-- `/rp sync-agent-persona` — write current RP character into the agent's `SOUL.md`
-- `/rp restore-agent-persona` — remove RP character preset from `SOUL.md`, restore original persona
+- `/rp init` - initialize the OpenClaw agent as the RP host/controller by writing managed blocks to `IDENTITY.md` and `SOUL.md`
+- `/rp init --status` - show resolved host persona file paths and managed block status
+- `/rp init --restore` - remove only the managed host persona blocks
+- `/rp sync-agent-persona` - legacy/manual mode: write current RP character into the agent's `SOUL.md`
+- `/rp restore-agent-persona` - remove legacy RP character preset from `SOUL.md`, restore original persona
 - `/rp pause` / `/rp resume` / `/rp end`
 
 ## Companion Quick Examples
@@ -195,7 +198,10 @@ Add plugin config under your OpenClaw config:
             "botToken": "123456:replace-with-your-bot-token"
           },
           "nativeHooks": {
-            "replyPayloadSending": false
+            "replyPayloadSending": false,
+            "inboundClaim": false,
+            "beforeAgentReply": false,
+            "beforeAgentRun": false
           }
         }
       }
@@ -211,6 +217,7 @@ Add plugin config under your OpenClaw config:
 - `telegram.botToken`: optional fallback Bot API token for text-only follow-ups when OpenClaw does not expose `runtime.channel.telegram.sendMessageTelegram` to plugins. You can also set `TELEGRAM_RP_BOT_TOKEN`; `OPENCLAW_RP_TELEGRAM_BOT_TOKEN` and `TELEGRAM_BOT_TOKEN` remain compatibility aliases.
 - `hooks.allowConversationAccess`: required by OpenClaw for non-bundled plugins that register conversation hooks such as `llm_output`. Without it, native assistant turns and native auto-media follow-ups cannot be persisted by the plugin.
 - `nativeHooks.replyPayloadSending`: opt-in for OpenClaw builds that expose `reply_payload_sending`. Keep it `false` on `v2026.5.27-beta.1` if the container logs `unknown typed hook "reply_payload_sending"`.
+- `nativeHooks.inboundClaim`, `nativeHooks.beforeAgentReply`, `nativeHooks.beforeAgentRun`: opt-in candidates for plugin-owned RP turns. Enable one at a time in Docker to identify which hook exists in your OpenClaw build. When a supported hook fires during an active RP session, the plugin generates the RP reply directly and asks OpenClaw to block the normal agent run.
 
 To let an OpenClaw agent use it, also allow `rp_generate_image` in the agent tool config. On OpenClaw `2026.3.x`, the recommended config is:
 

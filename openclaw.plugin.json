@@ -88,6 +88,18 @@
           "replyPayloadSending": {
             "type": "boolean",
             "default": false
+          },
+          "inboundClaim": {
+            "type": "boolean",
+            "default": false
+          },
+          "beforeAgentReply": {
+            "type": "boolean",
+            "default": false
+          },
+          "beforeAgentRun": {
+            "type": "boolean",
+            "default": false
           }
         }
       }

@@ -173,7 +173,7 @@ test("agent-image command reports current config", async () => {
 
   const result = await plugin.hooks.message_received(makeCtx("/rp agent-image"));
   assert.equal(result.response.ok, true);
-  assert.match(result.response.data.text, /Agent 生图配置/);
+  assert.match(result.response.data.text, /Agent image config/);
   assert.match(result.response.data.text, /provider: openai/);
   assert.match(result.response.data.text, /grok-imagine-1\.0/);
 });
@@ -206,7 +206,7 @@ test("agent-image command updates config through callback", async () => {
     provider: "gemini",
     imageModel: "gemini-3.1-flash-image-preview",
   });
-  assert.match(result.response.data.text, /配置已更新/);
+  assert.match(result.response.data.text, /Agent image config updated/);
   assert.match(result.response.data.text, /provider: gemini/);
 });
 

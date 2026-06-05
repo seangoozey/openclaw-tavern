@@ -1,192 +1,133 @@
-# OpenClaw Texting Persona WIP
+# OpenClaw Tavern WIP
 
-This is the living work plan for the persistent real-time texting persona feature.
+This is the living work plan for the OpenClaw Tavern RP plugin.
 
-## Goal
+## Direction
 
-Make an OpenClaw RP character feel like a person texting from their own life, not like a turn-based chatbot. The runtime should own time, schedule, availability, state, memory, proactive outreach, and output shaping.
+The preferred architecture is plugin-owned RP with a normal OpenClaw host agent.
 
-## Design Boundary
+When an RP session is active in a channel, the plugin should own that channel's RP turns: card identity, prompt construction, memory, state, schedule, media, delayed replies, and outgoing response text. The base OpenClaw agent should not answer those active RP turns.
 
-Avoid turning this into a full life simulator. The target is enough structured pressure to stop the model from behaving like a chatbot, not a complete simulation of a person.
+When no RP session is active, the normal OpenClaw agent should remain available. Its role is to help the user manage cards, sessions, plugin setup, and ordinary non-RP chat.
 
-Prefer:
+This avoids two fragile extremes:
 
-- schedule-driven availability
-- authoritative runtime clock
-- durable relationship state
-- lightweight mood drift
-- card-authored tendencies
-- prompt constraints plus simple runtime guards
+- Do not rely on making an unrelated base agent impersonate a card through prompt hooks alone.
+- Do not permanently rewrite the agent into each card character.
 
-Avoid:
+The agent should instead be initialized as an RP host/controller. The card character lives in plugin state and plugin-generated prompts.
 
-- many interdependent mood variables
-- multiple model calls before every reply
-- hidden complex scoring systems
-- simulating every hour of the character's life
-- adding complexity before Docker smoke testing the basic loop
-
-The basic loop should feel good first: short texts, real time, occasional unavailability, delayed replies, proactive messages, and memory continuity.
-
-## Current Status
+## Current Runtime Status
 
 - Character Card V2 and V3 import works for common fields.
 - `openclaw/texting_persona` extension exists under `data.extensions`.
 - Runtime state is persisted per session in plugin storage.
-- Prompt injection includes live texting state.
-- Plugin-owned generation path normalizes text dumps into short messages.
-- Native OpenClaw delivery path has optional `message_sending` and `reply_payload_sending` guards.
-- Generic `weekly_schedule` supports card-defined state overrides.
-- Domain-specific details such as school, work, shift, sleep, or fallback phrasing belong in the card extension.
+- Plugin-owned `/rp` generation path can build prompts, call a model provider, store turns, and normalize texting output.
+- `/rp start` can import/start a card and emit the card's first message.
+- Native hook injection has been fragile in Docker due to hook availability, hook ordering, permission gates, and payload shape.
+- `reply_payload_sending` is opt-in because the target OpenClaw Docker runtime logs it as unknown.
+- `llm_output` requires `plugins.entries.openclaw-rp-plugin.hooks.allowConversationAccess=true`.
+- `/rp sync-agent-persona` exists but is not currently proven to write the active Docker agent's actual `SOUL.md`.
+- `/rp` command output still contains hardcoded Chinese text in `commandRouter.js`.
+
+## Target Runtime
+
+Target live runtime remains OpenClaw `v2026.5.27-beta.1` in Linux Docker.
+
+Config priority rule:
+
+- Prefer OpenClaw config / `~/.openclaw/openclaw.json`.
+- Then plugin provider file `~/.openclaw/openclaw-rp/provider.json`.
+- Then environment variables as fallback only.
 
 ## Active Plan
 
-### 1. Authoritative Runtime Clock
+### 1. RP-Owned Native Turn Claiming
 
-Status: implemented.
+Status: implemented as `/rp init` MVP.
 
-The plugin must be the authoritative source of date/time. Do not rely on the model to know the current day, date, timezone, or relative dates.
+Goal: while an RP session is active, the plugin should claim or short-circuit normal user turns and return the RP engine's response directly. The normal OpenClaw agent should not run for those turns.
 
-Planned behavior:
+Candidate OpenClaw hooks from current docs:
 
-- Resolve `utc_now` in plugin code. Done.
-- Resolve character/session-local date, weekday, time, and timezone. Done.
-- Compute concrete relative anchors such as tomorrow and next Friday. Done.
-- Inject a `Runtime Clock` prompt block every texting-persona turn. Done.
-- Use plugin-computed time for schedule evaluation and future delayed queues. Schedule evaluation uses plugin time; delayed queues are not implemented yet.
+- `inbound_claim`: claim inbound messages before agent routing with synthetic replies.
+- `before_agent_reply`: short-circuit the model turn with a synthetic reply or silence.
+- `before_agent_run`: block the normal agent run before the model reads the prompt.
 
-Follow-up:
+Needed:
 
-- Add more relative anchors if needed by card/runtime behavior.
-- Use the same runtime clock helpers for availability/delay decisions.
-- Ensure delayed outbound queue stores absolute timestamps only.
+- Verify which of these hooks exist in OpenClaw `v2026.5.27-beta.1`.
+- Risky hook registration is now opt-in through `nativeHooks.inboundClaim`, `nativeHooks.beforeAgentReply`, and `nativeHooks.beforeAgentRun`.
+- Active RP sessions now route claimed messages through the plugin router / `SessionManager.processDialogue()`.
+- Claimed turns return a synthetic reply payload with `handled`, `claimed`, `block`, `content`, `message`, `reply`, and `syntheticReply` fields to cover likely OpenClaw return shapes.
+- Prevent the base agent from generating a second response once the correct runtime hook is verified.
+- Do not claim channels without an active RP session.
+- Define behavior for paused sessions: likely return a short paused notice rather than letting the base agent answer in-character.
+- Define behavior for ended sessions: release the channel back to the normal agent.
+- Claimed native turns are cached briefly by session/event/content so multiple candidate hooks do not store the same user message twice.
 
-### 2. Availability / Delay Gate
+Acceptance tests:
 
-Status: implemented as MVP.
+- Active RP session: a normal user message produces only a plugin RP response.
+- No active RP session: the plugin does not claim the turn.
+- Paused RP session: no character reply is generated.
+- Ended RP session: normal agent flow can resume.
+- User message is stored exactly once even if multiple hooks fire.
 
-Before generation, decide whether the character should:
+### 2. Host Agent Initialization
 
-- reply now. Done.
-- reply briefly. Decision exists; prompt/output shaping still handles brevity rather than a separate model path.
-- delay reply. Done for plugin-owned texting persona generation path.
-- not reply. Decision exists.
-- schedule a later repair/check-in. Delayed reply queue exists; repair-specific policy is not implemented yet.
+Status: in progress.
 
-Inputs:
+Goal: initialize the OpenClaw agent as an RP host/controller, not as the current card character.
 
-- attention level
-- active schedule event
-- sleep window
-- recent emotional state
-- user message type
-- prior unanswered proactive messages
+The host agent should understand:
 
-Implemented behavior:
+- Active RP sessions are owned by the plugin.
+- The host should not answer active RP turns as itself.
+- The host can help manage `/rp` commands, imports, debugging, and setup when RP is inactive.
+- The host should not mix its own persona into active RP.
 
-- `availability.by_attention` maps attention values to `reply_now`, `reply_brief`, `delay`, or `no_reply`.
-- `availability.delay_minutes_by_attention` controls delay duration.
-- Delayed replies are enqueued with absolute `due_at` timestamps.
-- Inbound messages do not wake an asleep/unavailable/distracted character just because the user texted.
+`/rp init` should be the default onboarding command for this route. It initializes the agent as the OpenClaw Tavern host/controller, not as any imported card character.
 
-Follow-up:
+Candidate managed `IDENTITY.md` block:
 
-- Integrate the gate with native OpenClaw `before_agent_reply` if needed.
-- Add richer rules using emotional state, relationship temperature, unanswered proactive messages, and user event classification.
+```text
+<!-- openclaw-rp-plugin:identity:begin -->
+# OpenClaw Tavern Host
 
-### 3. Delayed Outbound Queue
+You are the OpenClaw Tavern Host, an RP session controller for OpenClaw.
 
-Status: implemented as MVP.
+Your persistent identity is not any imported character card. Imported characters live inside OpenClaw RP plugin sessions.
 
-Needed for:
+When an RP session is active, the plugin owns character identity, memory, style, state, schedule, and outgoing RP text.
 
-- delayed replies. Done.
-- next-morning replies after sleep
-- repair texts after embarrassment
-- proactive texts
+When no RP session is active, help the user manage RP sessions, cards, presets, lorebooks, plugin setup, and debugging.
+<!-- openclaw-rp-plugin:identity:end -->
+```
 
-Store absolute timestamps, not natural-language times.
+Candidate managed `SOUL.md` host block:
 
-Implemented behavior:
+```text
+<!-- openclaw-rp-plugin:host:begin -->
+You are hosting OpenClaw RP sessions.
+Active RP sessions are owned by the OpenClaw RP plugin.
+Do not impersonate active RP characters unless the plugin explicitly injects that context.
+When the plugin blocks, replaces, or claims a turn, treat that as authoritative.
+When no RP session is active, help the user manage RP sessions, cards, presets, lorebooks, and plugin setup.
+<!-- openclaw-rp-plugin:host:end -->
+```
 
-- `rp_delayed_messages` stores pending delayed messages.
-- Store backends can enqueue, list due pending messages, mark sent, and mark failure.
-- The OpenClaw service tick sends due delayed Telegram messages before companion outreach.
+Needed:
 
-Follow-up:
+- Add `/rp init` to install/update the managed host blocks in `IDENTITY.md` and `SOUL.md`. Done.
+- Add `/rp init --status` to show resolved workspace, file paths, host block presence, old character block presence, and modified times. Done.
+- Add `/rp init --restore` to remove only the managed host blocks. Done.
+- Keep `/rp sync-agent-persona` as optional character-sync mode, not the default strategy.
+- Consider `/rp persona-status` as an alias or richer future status command after `/rp init --status`.
+- Fix Docker path resolution so sync commands write the real active agent `SOUL.md`.
+- Preserve and restore existing `IDENTITY.md` and `SOUL.md` content safely. Done for managed host blocks.
 
-- Add native OpenClaw delivery support beyond Telegram if supported.
-- Add queue commands and observability.
-- Add repair/proactive queue item kinds.
-
-### 4. State Decay
-
-Status: deferred / keep lightweight.
-
-Do not implement a heavy mood simulation yet. If needed, implement lightweight state evolution rather than a deterministic decay table.
-
-Possible lightweight behavior:
-
-- schedule controls attention strongly
-- schedule and card-defined tendencies bias mood
-- recent user events bias mood temporarily
-- durable relationship values change slowly
-- seeded randomness picks among plausible moods once per schedule window or every few hours
-
-Avoid extra LLM calls for mood drift unless later testing proves it is necessary.
-
-### 5. Structured Event Classification
-
-Status: deferred.
-
-Current runtime uses lightweight regex heuristics for state updates. Keep that approach unless Docker testing shows relationship state is changing incorrectly or missing important user intent.
-
-Possible future structured classifier targets:
-
-- respectful boundary handling
-- pressure/coercion
-- flirtation
-- vulnerability
-- identifying-info requests
-- disengagement or annoyance
-
-Purpose:
-
-- improve durable relationship state updates
-- detect boundary and privacy risks more accurately
-- avoid misclassifying pressure, flirtation, or vulnerability
-
-Do not add an extra model call every turn. If implemented later, prefer an optional classifier only for ambiguous or high-risk messages.
-
-### 6. Premise and Boundary Guards
-
-Status: implemented as lightweight guard.
-
-Purpose: preserve the fictional premise and card-defined boundaries, not protect a real person's privacy.
-
-Implemented behavior:
-
-- Uses card extension text from `privacy_model`, `behavior_rules`, and message rules to infer simple boundaries.
-- If the card declares text-only / no-meeting behavior, removes obvious meeting-plan lines.
-- If the card declares location/identifying-detail boundaries, removes obvious exact-address, dorm/building, room-number, or live-location lines.
-- If the card declares contact-info boundaries, removes obvious email or phone-number lines.
-
-Keep this lightweight. Do not build heavy PII scanning unless testing shows repeated premise-breaking outputs.
-
-### 7. Debug Commands
-
-Status: not started.
-
-Candidate commands:
-
-- `/rp texting-state`
-- `/rp texting-debug`
-- `/rp texting-now`
-- `/rp texting-pause`
-- `/rp texting-schedule`
-
-### 8. Logging / Runtime Observability
+### 3. Logging / Runtime Observability
 
 Status: not started.
 
@@ -205,10 +146,112 @@ Needed:
 - Send useful debug logs to container stdout/stderr when enabled.
 - Optionally write a plugin log file under the OpenClaw/plugin state directory.
 - Redact or omit full user/card/model text from debug logs by default.
-- Add startup logging for effective config source, selected provider, locale, Telegram fallback status, hook availability, and SQLite state path.
+- Log effective config source, selected provider, locale, Telegram fallback status, hook availability, SQLite path, and active native mode.
 - Add scheduler and delayed-message counters without dumping private content.
 
-### 9. Fake-Time Tests
+### 4. English User-Facing Output
+
+Status: core command router fixed.
+
+The live OpenClaw smoke test shows `/rp` responses still contain Chinese labels and mojibake-looking text. These are mostly hardcoded in `src/core/commandRouter.js`, not produced by the i18n fallback.
+
+Needed:
+
+- Audit `/rp` command responses for Chinese text and mojibake. Done for `src/core/commandRouter.js`.
+- Replace default command output with English strings. Done for help, import, assets, start, session, status, image/video, agent-image, and companion skip responses.
+- Keep localization support only if explicit and reliable.
+- Add tests for `/rp help`, import, start, session, image/video, and agent-image output so English output does not regress. Basic command regression added.
+
+### 5. Native Hook Compatibility Matrix
+
+Status: in progress informally.
+
+Track which hooks exist and behave correctly in the target Docker runtime.
+
+Known observations:
+
+- `llm_output` is permission-gated by `hooks.allowConversationAccess=true`.
+- `reply_payload_sending` is unknown in the current target runtime and should stay disabled by default.
+- `message_sending` appears to be available, but should not be foundational for the core RP illusion.
+- `before_prompt_build` can inject context but is not enough as the primary architecture.
+
+Needed:
+
+- Verify `inbound_claim`.
+- Verify `before_agent_reply`.
+- Verify `before_agent_run`.
+- Verify whether decision returns can block/silence normal agent output in the installed Docker version.
+- Document exact `openclaw.json` config required for these hooks.
+
+### 6. Texting Persona Runtime
+
+Status: MVP implemented.
+
+The texting persona feature should make a character feel like a person texting from their own life rather than a turn-based chatbot.
+
+Implemented:
+
+- Reads `openclaw/texting_persona` from cards.
+- Persists per-session runtime state.
+- Injects runtime clock and state into prompts.
+- Supports generic weekly schedules with card-defined state overrides.
+- Normalizes plugin-owned generated text into short messages.
+- Adds lightweight premise and boundary guards.
+
+Follow-up:
+
+- Improve availability policy with emotional state, relationship temperature, unanswered proactive messages, and user event classification.
+- Keep card-domain details in the card extension, not runtime code.
+- Avoid heavy simulation systems or extra model calls unless live testing proves they are needed.
+
+### 7. Availability / Delay Gate
+
+Status: implemented as MVP.
+
+Implemented behavior:
+
+- `availability.by_attention` maps attention values to `reply_now`, `reply_brief`, `delay`, or `no_reply`.
+- `availability.delay_minutes_by_attention` controls delay duration.
+- Delayed replies are enqueued with absolute `due_at` timestamps.
+- Inbound messages do not automatically wake asleep/unavailable/distracted characters.
+
+Follow-up:
+
+- Integrate the gate with the future RP-owned native turn-claiming path.
+- Add repair/check-in message kinds.
+- Add deterministic fake-time tests for more schedules and timezones.
+
+### 8. Delayed Outbound Queue
+
+Status: implemented as MVP.
+
+Implemented:
+
+- `rp_delayed_messages` stores pending delayed messages.
+- Store backends can enqueue, list due pending messages, mark sent, and mark failure.
+- The OpenClaw service tick sends due delayed Telegram messages before companion outreach.
+
+Follow-up:
+
+- Extend the queue beyond delayed replies to repair and proactive messages.
+- Add queue inspection/debug commands.
+- Add native OpenClaw delivery support if the runtime exposes a reliable send API.
+
+### 9. Debug Commands
+
+Status: not started.
+
+Candidate commands:
+
+- `/rp state`
+- `/rp texting-state`
+- `/rp texting-debug`
+- `/rp texting-now`
+- `/rp hooks-status`
+- `/rp persona-status`
+- `/rp queue`
+
+### 10. Fake-Time Tests
 
 Status: not started.
 
@@ -220,37 +263,29 @@ Add deterministic tests for:
 - next-day embarrassment reset
 - weekend proactive likelihood
 - relative date calculation
+- due delayed reply dispatch
 
-### 10. Character Book V2 Support
+### 11. Character Book V2 Support
 
 Status: not started.
 
 Improve full Character Card V2/V3 support by importing `character_book` into lorebook or prompt context.
 
-### 11. Docker Smoke Test
+### 12. Docker Smoke Test
 
-Status: not started.
+Status: ongoing.
 
 Verify in OpenClaw `v2026.5.27-beta.1` running in Linux Docker:
 
-- `message_sending` fires for native agent replies.
-- `reply_payload_sending` fires when expected.
-- outbound payload shape matches rewrite assumptions.
-- normalized texting output is what the user sees.
-
-### 12. English User-Facing Output
-
-Status: not started.
-
-The live OpenClaw smoke test shows `/rp` responses still contain Chinese labels and mojibake-looking text, for example the import success and session-ready messages. For this project, user-facing command output should be English unless localization is explicitly enabled.
-
-Needed:
-
-- Audit `/rp` command responses for Chinese text and mojibake.
-- Replace default command output with English strings.
-- Keep localization support only if it is explicit and reliable.
-- Add tests for import/start/session messages so English output does not regress.
+- card import works
+- `/rp start` sends first card message
+- normal user reply during active RP is claimed by plugin-owned RP engine
+- normal user reply does not produce a second base-agent response
+- `/rp pause` behavior is correct
+- `/rp end` releases the channel
+- Telegram fallback token `TELEGRAM_RP_BOT_TOKEN` works when native send API is unavailable
+- required hook permissions are documented and present in `openclaw.json`
 
 ## Maintenance Rule
 
-Update this file whenever the texting-persona roadmap, implementation status, schema, or priorities change.
+Update this file whenever the roadmap, implementation status, schema, runtime assumptions, or priorities change.

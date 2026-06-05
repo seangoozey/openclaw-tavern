@@ -68,6 +68,24 @@ export const openclawRpPluginConfigSchema = {
           description:
             "Opt in to the reply_payload_sending hook on OpenClaw builds that expose it. Disabled by default because some runtimes log unknown typed hook warnings.",
         },
+        inboundClaim: {
+          type: "boolean",
+          default: false,
+          description:
+            "Opt in to the inbound_claim hook. When available, active RP sessions can claim inbound turns and return plugin-generated RP replies before the normal agent runs.",
+        },
+        beforeAgentReply: {
+          type: "boolean",
+          default: false,
+          description:
+            "Opt in to the before_agent_reply hook. When available, active RP sessions can short-circuit the normal agent reply with a plugin-generated RP reply.",
+        },
+        beforeAgentRun: {
+          type: "boolean",
+          default: false,
+          description:
+            "Opt in to the before_agent_run hook. When available, active RP sessions can block or replace the normal agent run with plugin-owned RP output.",
+        },
       },
     },
   },
