@@ -65,6 +65,7 @@ Needed:
 - Define behavior for paused sessions: likely return a short paused notice rather than letting the base agent answer in-character.
 - Define behavior for ended sessions: release the channel back to the normal agent.
 - Claimed native turns are cached briefly by session/event/content so multiple candidate hooks do not store the same user message twice.
+- Live Docker issue fixed in code: `before_prompt_build` may receive `channelId=<chatId>`, empty `conversationId`, and `sessionKey=agent:<id>:telegram:direct:<chatId>` while `message_received` stored `telegram:telegram:<chatId>`. Context lookup now derives candidate keys from the session key channel type.
 
 Acceptance tests:
 
@@ -125,6 +126,7 @@ Needed:
 - Keep `/rp sync-agent-persona` as optional character-sync mode, not the default strategy.
 - Consider `/rp persona-status` as an alias or richer future status command after `/rp init --status`.
 - Fix Docker path resolution so sync commands write the real active agent `SOUL.md`.
+- Live Docker issue fixed in code: `/rp init` now derives the current agent ID from command context/session key, so `agent:rp:...` resolves the `rp` workspace instead of the default/random agent.
 - Preserve and restore existing `IDENTITY.md` and `SOUL.md` content safely. Done for managed host blocks.
 
 ### 3. Logging / Runtime Observability

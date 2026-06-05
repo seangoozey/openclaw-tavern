@@ -129,3 +129,22 @@ test("resolvePersonaWorkspaceDir falls back to default agent workspace config", 
   });
   assert.equal(result, path.resolve("/tmp/main-workspace"));
 });
+
+test("resolvePersonaWorkspaceDir uses requested agent id before default workspace", () => {
+  const result = resolvePersonaWorkspaceDir({
+    agentId: "rp",
+    apiConfig: {
+      agents: {
+        list: [{ id: "main", default: true, workspace: "/tmp/main-workspace" }],
+        defaults: {
+          workspace: "/tmp/default-workspace",
+        },
+      },
+    },
+    env: {
+      HOME: "/home/node",
+      OPENCLAW_STATE_DIR: "/home/node/.openclaw",
+    },
+  });
+  assert.equal(result, path.resolve("/home/node/.openclaw/workspace-rp"));
+});

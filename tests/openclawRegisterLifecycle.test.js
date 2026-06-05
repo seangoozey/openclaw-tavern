@@ -219,6 +219,53 @@ test("/rp init manages host IDENTITY.md and SOUL.md blocks", async () => {
   }
 });
 
+test("/rp init uses agent id from command session key", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const mainWorkspace = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-main-workspace-"));
+  const rpWorkspace = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-rp-workspace-"));
+  const commands = new Map();
+  const services = new Map();
+  const hooks = new Map();
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        services,
+        hooks,
+        config: {
+          agents: {
+            list: [
+              { id: "main", default: true, workspace: mainWorkspace },
+              { id: "rp", workspace: rpWorkspace },
+            ],
+          },
+        },
+      }),
+    );
+
+    const rp = commands.get("rp");
+    assert.ok(rp);
+    const result = await rp.handler({
+      commandBody: "/rp init",
+      sessionKey: "agent:rp:telegram:direct:8706543102",
+    });
+    assert.equal(result.isError, undefined);
+    assert.match(result.text, /Agent: rp/);
+    assert.match(result.text, new RegExp(rpWorkspace.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+    const rpIdentity = await readFile(path.join(rpWorkspace, "IDENTITY.md"), "utf8");
+    assert.match(rpIdentity, /OpenClaw Tavern Host/);
+    await assert.rejects(() => readFile(path.join(mainWorkspace, "IDENTITY.md"), "utf8"));
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(mainWorkspace, { recursive: true, force: true });
+    await rm(rpWorkspace, { recursive: true, force: true });
+  }
+});
+
 test("owned native RP hook claims active session turn and caches duplicate hooks", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
   const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));
@@ -411,6 +458,89 @@ test("before_prompt_build recovers active RP session when message_received did n
 
     assert.match(injected.systemPrompt, /Vera is a terse night-shift dispatcher/);
     assert.match(injected.prependContext, /yeah, barely/);
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(assetDir, { recursive: true, force: true });
+  }
+});
+
+test("before_prompt_build matches telegram rp context from agent session key", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));
+  const commands = new Map();
+  const hooks = new Map();
+  const services = new Map();
+  const cardPath = path.join(assetDir, "lena.json");
+  await writeFile(
+    cardPath,
+    JSON.stringify({
+      name: "Lena",
+      description: "Lena speaks in short late-night texts.",
+      first_mes: "hey",
+    }),
+    "utf8",
+  );
+
+  try {
+    registerModule.register(makeApi({ stateDir, commands, hooks, services }));
+    const rp = commands.get("rp");
+    assert.ok(rp);
+
+    const baseCtx = {
+      channel: "telegram",
+      channelId: "telegram",
+      conversationId: "telegram:8706543102",
+      senderId: "8706543102",
+      from: "8706543102",
+      commandBody: "",
+    };
+    let result = await rp.handler({
+      ...baseCtx,
+      commandBody: `/rp import-card --file "${cardPath}"`,
+    });
+    assert.equal(result.isError, undefined);
+
+    result = await rp.handler({
+      ...baseCtx,
+      commandBody: "/rp start --card Lena",
+    });
+    assert.equal(result.isError, undefined);
+
+    const messageReceived = hooks.get("message_received");
+    assert.equal(typeof messageReceived, "function");
+    await messageReceived(
+      {
+        content: "you there?",
+        metadata: {
+          senderId: "8706543102",
+        },
+      },
+      {
+        channelId: "telegram",
+        conversationId: "telegram:8706543102",
+        senderId: "8706543102",
+      },
+    );
+
+    const beforePrompt = hooks.get("before_prompt_build");
+    assert.equal(typeof beforePrompt, "function");
+    const injected = await beforePrompt(
+      {
+        content: "you there?",
+        metadata: {
+          senderId: "8706543102",
+        },
+      },
+      {
+        channelId: "8706543102",
+        conversationId: "",
+        sessionKey: "agent:rp:telegram:direct:8706543102",
+      },
+    );
+
+    assert.match(injected.systemPrompt, /Lena speaks in short late-night texts/);
+    assert.match(injected.prependContext, /you there\?/);
   } finally {
     services.get("openclaw-rp-sqlite")?.stop();
     await rm(stateDir, { recursive: true, force: true });

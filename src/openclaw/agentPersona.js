@@ -330,17 +330,31 @@ function normalizeAgentId(value) {
   return String(value || "").trim() || DEFAULT_AGENT_ID;
 }
 
-export function resolvePersonaWorkspaceDir({ workspaceDir, apiConfig, env = process.env }) {
+export function resolvePersonaWorkspaceDir({ workspaceDir, apiConfig, env = process.env, agentId }) {
   if (workspaceDir) {
     return path.resolve(String(workspaceDir));
   }
 
   const agents = Array.isArray(apiConfig?.agents?.list) ? apiConfig.agents.list : [];
-  const defaultAgent = agents.find((entry) => entry?.default) || agents[0] || null;
+  const requestedAgentId = String(agentId || "").trim();
+  const requestedAgent = requestedAgentId
+    ? agents.find((entry) => String(entry?.id || "").trim() === requestedAgentId)
+    : null;
+  if (requestedAgentId && !requestedAgent) {
+    const stateDir = String(env.OPENCLAW_STATE_DIR || path.join(String(env.HOME || ""), ".openclaw")).trim();
+    return path.resolve(path.join(stateDir, `workspace-${requestedAgentId}`));
+  }
+
+  const defaultAgent = requestedAgent || agents.find((entry) => entry?.default) || agents[0] || null;
   const defaultAgentId = normalizeAgentId(defaultAgent?.id);
   const agentWorkspace = String(defaultAgent?.workspace || "").trim();
   if (agentWorkspace) {
     return path.resolve(agentWorkspace);
+  }
+
+  if (requestedAgentId && !agentWorkspace) {
+    const stateDir = String(env.OPENCLAW_STATE_DIR || path.join(String(env.HOME || ""), ".openclaw")).trim();
+    return path.resolve(path.join(stateDir, `workspace-${requestedAgentId}`));
   }
 
   const defaultWorkspace = String(apiConfig?.agents?.defaults?.workspace || "").trim();

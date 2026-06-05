@@ -465,23 +465,23 @@ function findRpContext(activeByAgentSessionKey, activeByChannel, ctx) {
   // numeric/prefixed chat-id segment and try it as conversationId.
   if (agentSessionKey && !conversationId) {
     const segments = agentSessionKey.split(":");
+    const sessionChannelType = asString(segments[2]).toLowerCase();
     // Try the last segment(s) as a conversationId candidate.
     // sessionKey format: agent:<name>:<channel>:<mode>:<chatId>
     for (let i = segments.length - 1; i >= 2; i--) {
       const candidate = segments.slice(i).join(":");
-      const candidateKey = [channelId, channelId, candidate]
-        .filter(Boolean).join(":").toLowerCase();
-      const byCandidate = activeByChannel.get(candidateKey);
-      if (byCandidate) {
-        return byCandidate;
-      }
-      // Also try channelId:candidate (without duplicating channelId)
-      const shortKey = [channelId, candidate]
-        .filter(Boolean).join(":").toLowerCase();
-      if (shortKey !== candidateKey) {
-        const byShort = activeByChannel.get(shortKey);
-        if (byShort) {
-          return byShort;
+      const candidateKeys = [
+        [channelId, channelId, candidate],
+        [channelId, candidate],
+        [sessionChannelType, sessionChannelType, candidate],
+        [sessionChannelType, candidate],
+      ]
+        .map((parts) => parts.filter(Boolean).join(":").toLowerCase())
+        .filter(Boolean);
+      for (const key of candidateKeys) {
+        const byCandidate = activeByChannel.get(key);
+        if (byCandidate) {
+          return byCandidate;
         }
       }
     }
@@ -519,14 +519,20 @@ function findRecentlyEndedKey(recentlyEnded, ctx, ttlMs) {
   const agentSessionKey = asString(ctx?.sessionKey);
   if (agentSessionKey && !conversationId) {
     const segments = agentSessionKey.split(":");
+    const sessionChannelType = asString(segments[2]).toLowerCase();
     for (let i = segments.length - 1; i >= 2; i--) {
       const candidate = segments.slice(i).join(":");
-      const candidateKey = [channelId, channelId, candidate]
-        .filter(Boolean).join(":").toLowerCase();
-      if (recentlyEnded.has(candidateKey)) return candidateKey;
-      const shortKey = [channelId, candidate]
-        .filter(Boolean).join(":").toLowerCase();
-      if (shortKey !== candidateKey && recentlyEnded.has(shortKey)) return shortKey;
+      const candidateKeys = [
+        [channelId, channelId, candidate],
+        [channelId, candidate],
+        [sessionChannelType, sessionChannelType, candidate],
+        [sessionChannelType, candidate],
+      ]
+        .map((parts) => parts.filter(Boolean).join(":").toLowerCase())
+        .filter(Boolean);
+      for (const key of candidateKeys) {
+        if (recentlyEnded.has(key)) return key;
+      }
     }
   }
 
@@ -1146,6 +1152,7 @@ async function handleSyncAgentPersonaCommand({ store, ctx, apiConfig, logger }) 
   const workspaceDir = resolvePersonaWorkspaceDir({
     workspaceDir: ctx.workspaceDir,
     apiConfig,
+    agentId: resolvePersonaAgentId(ctx),
   });
   const managedSoul = buildManagedSoulOverride({
     cardDetail,
@@ -1177,6 +1184,7 @@ async function handleRestoreAgentPersonaCommand({ ctx, apiConfig, logger }) {
   const workspaceDir = resolvePersonaWorkspaceDir({
     workspaceDir: ctx.workspaceDir,
     apiConfig,
+    agentId: resolvePersonaAgentId(ctx),
   });
   const result = await restoreSoul({ workspaceDir });
 
@@ -1208,11 +1216,16 @@ async function handleRestoreAgentPersonaCommand({ ctx, apiConfig, logger }) {
   };
 }
 
+function resolvePersonaAgentId(...sources) {
+  return [...collectAgentIdCandidates(...sources)][0] || "";
+}
+
 function formatHostPersonaStatus(status) {
   const yesNo = (value) => (value ? "yes" : "no");
   const lines = [
     "OpenClaw RP host persona status",
     "",
+    `Agent: ${status.agentId || "(unresolved)"}`,
     `Workspace: ${status.workspaceDir || "(unresolved)"}`,
     `IDENTITY.md: ${status.identity?.path || "(unresolved)"}`,
     `- exists: ${yesNo(status.identity?.exists)}`,
@@ -1228,13 +1241,15 @@ function formatHostPersonaStatus(status) {
 }
 
 async function handleInitCommand({ ctx, apiConfig, logger, options = {} }) {
+  const agentId = resolvePersonaAgentId(ctx);
   const workspaceDir = resolvePersonaWorkspaceDir({
     workspaceDir: ctx.workspaceDir,
     apiConfig,
+    agentId,
   });
 
   if (options.status) {
-    const status = await getManagedHostPersonaStatus({ workspaceDir });
+    const status = { ...(await getManagedHostPersonaStatus({ workspaceDir })), agentId };
     return {
       ok: true,
       message: "OpenClaw RP host persona status",
@@ -1247,7 +1262,7 @@ async function handleInitCommand({ ctx, apiConfig, logger, options = {} }) {
 
   if (options.restore) {
     const result = await restoreManagedHostPersona({ workspaceDir });
-    const status = await getManagedHostPersonaStatus({ workspaceDir });
+    const status = { ...(await getManagedHostPersonaStatus({ workspaceDir })), agentId };
     logger?.info?.(`[openclaw-rp] restored host persona blocks workspace=${workspaceDir}`);
     return {
       ok: true,
@@ -1270,7 +1285,7 @@ async function handleInitCommand({ ctx, apiConfig, logger, options = {} }) {
   }
 
   const result = await syncManagedHostPersona({ workspaceDir });
-  const status = await getManagedHostPersonaStatus({ workspaceDir });
+  const status = { ...(await getManagedHostPersonaStatus({ workspaceDir })), agentId };
   logger?.info?.(`[openclaw-rp] initialized host persona workspace=${workspaceDir}`);
   return {
     ok: true,
