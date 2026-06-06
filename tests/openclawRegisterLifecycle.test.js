@@ -749,6 +749,62 @@ test("owned native RP hook skips without warning when model provider is unavaila
   }
 });
 
+test("telegram command contexts normalize prefixed direct chat ids", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));
+  const commands = new Map();
+  const hooks = new Map();
+  const services = new Map();
+  const cardPath = path.join(assetDir, "nina.json");
+  await writeFile(
+    cardPath,
+    JSON.stringify({
+      name: "Nina",
+      description: "Nina answers like a dry-humored night owl.",
+      first_mes: "still up?",
+    }),
+    "utf8",
+  );
+
+  try {
+    registerModule.register(makeApi({ stateDir, commands, hooks, services }));
+    const rp = commands.get("rp");
+    const baseCtx = {
+      channel: "telegram",
+      channelId: "telegram:8706543102",
+      conversationId: "telegram:8706543102",
+      messageThreadId: "8706543102",
+      senderId: "telegram:8706543102",
+      from: "telegram:8706543102",
+      commandBody: "",
+      sessionKey: "agent:rp:telegram:direct:8706543102",
+    };
+
+    let result = await rp.handler({
+      ...baseCtx,
+      commandBody: `/rp import-card --file "${cardPath}"`,
+    });
+    assert.equal(result.isError, undefined);
+    result = await rp.handler({
+      ...baseCtx,
+      commandBody: "/rp start --card Nina",
+    });
+    assert.equal(result.isError, undefined);
+
+    result = await rp.handler({
+      ...baseCtx,
+      commandBody: "/rp session",
+    });
+    assert.equal(result.isError, undefined);
+    assert.match(result.text, /Current session/);
+    assert.match(result.text, /channel key: telegram:8706543102:8706543102:8706543102/);
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(assetDir, { recursive: true, force: true });
+  }
+});
+
 test("before_prompt_build recovers active RP session when message_received did not run first", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
   const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));

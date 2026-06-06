@@ -189,18 +189,40 @@ function isVoiceMediaSource(rawUrl) {
   return /\.(mp3|mpeg|ogg|wav|m4a|mp4)(\?.*)?$/i.test(String(rawUrl || ""));
 }
 
+function stripChannelIdentityPrefix(channelType, value) {
+  const raw = asString(value);
+  const ch = asString(channelType).toLowerCase();
+  if (!raw || !ch) {
+    return raw;
+  }
+  const prefix = `${ch}:`;
+  return raw.toLowerCase().startsWith(prefix) ? raw.slice(prefix.length) : raw;
+}
+
+function inferChannelTypeFromSessionKey(value) {
+  const raw = asString(value);
+  const parts = raw.split(":");
+  return parts[0] === "agent" && parts[2] ? parts[2].toLowerCase() : "";
+}
+
 function buildCommandContext(ctx) {
   // Lowercase channelType to match buildHookRouterContext which also lowercases.
-  const channelType = String(ctx.channel || ctx.channelId || "unknown").toLowerCase();
+  const rawChannelType = asString(ctx.channel || ctx.channelId || "unknown");
+  const channelType = rawChannelType.includes(":")
+    ? rawChannelType.split(":")[0].toLowerCase()
+    : rawChannelType.toLowerCase();
   // Prefer conversationId (same field that hooks use via hookCtx.conversationId)
   // so that the session key matches what message_received will look for later.
-  const platformContextId = String(
-    ctx.conversationId || ctx.to || ctx.accountId || channelType || "unknown",
+  const platformContextId = stripChannelIdentityPrefix(
+    channelType,
+    ctx.conversationId || ctx.to || ctx.accountId || ctx.channelId || channelType || "unknown",
   );
-  const channelId = ctx.messageThreadId
-    ? `${platformContextId}:${ctx.messageThreadId}`
+  const threadId = asString(ctx.messageThreadId || ctx.message_thread_id);
+  const shouldAppendThread = threadId && threadId !== platformContextId;
+  const channelId = shouldAppendThread
+    ? `${platformContextId}:${threadId}`
     : platformContextId;
-  const userId = String(ctx.senderId || ctx.from || "unknown");
+  const userId = stripChannelIdentityPrefix(channelType, ctx.senderId || ctx.from || platformContextId || "unknown");
 
   return {
     channelType,
@@ -594,15 +616,25 @@ function resolveHookUserId(event) {
 }
 
 function buildHookRouterContext(event, hookCtx) {
-  const channelType = asString(hookCtx?.channelId || "unknown").toLowerCase();
+  const rawChannelType = asString(hookCtx?.channelId || "");
+  const inferredChannelType = inferChannelTypeFromSessionKey(hookCtx?.sessionKey || hookCtx?.session_key);
+  const channelType = rawChannelType && !/^-?\d+$/.test(rawChannelType)
+    ? rawChannelType.split(":")[0].toLowerCase()
+    : inferredChannelType || rawChannelType.toLowerCase() || "unknown";
   const conversationId =
-    asString(hookCtx?.conversationId) ||
-    asString(event?.metadata?.originatingTo) ||
-    asString(event?.metadata?.to) ||
-    asString(event?.metadata?.threadId) ||
-    asString(event?.from) ||
+    stripChannelIdentityPrefix(
+      channelType,
+      asString(hookCtx?.conversationId) ||
+        asString(event?.metadata?.originatingTo) ||
+        asString(event?.metadata?.to) ||
+        asString(event?.metadata?.threadId) ||
+        asString(event?.from),
+    ) ||
     "unknown";
-  const userId = resolveHookUserId(event) || extractSenderId(conversationId) || conversationId;
+  const userId = stripChannelIdentityPrefix(
+    channelType,
+    resolveHookUserId(event) || extractSenderId(conversationId) || conversationId,
+  );
   const threadIdRaw = event?.metadata?.threadId;
   const threadId =
     typeof threadIdRaw === "number"
@@ -3536,8 +3568,8 @@ export default {
         // Previously this could degrade to just "telegram", causing all Telegram
         // conversations to share a single rpCtx slot and overwrite each other.
         const channelKey = [
-          asString(hookCtx?.channelId || routerCtx.channelType),
-          asString(hookCtx?.conversationId || routerCtx.platformContextId),
+          asString(routerCtx.channelType),
+          asString(routerCtx.platformContextId),
         ].filter(Boolean).join(":").toLowerCase();
         const agentSessionKey = asString(hookCtx?.sessionKey || hookCtx?.session_key);
         cleanupRpContextMaps(activeRpContextByAgentSessionKey, activeRpContextByChannel, rpContextTtlMs);

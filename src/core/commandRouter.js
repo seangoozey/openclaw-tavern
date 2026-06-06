@@ -993,6 +993,7 @@ export class CommandRouter {
       `- status: ${bundle.session.status}`,
       `- turns: ${bundle.session.turn_count}`,
       `- summary version: ${bundle.session.summary_version}`,
+      `- channel key: ${bundle.session.channel_session_key}`,
     ];
     if (bundle.lorebooks.length > 0) {
       lines.push(`- lorebooks: ${bundle.lorebooks.map((x) => x.name).join(", ")}`);
@@ -1006,6 +1007,7 @@ export class CommandRouter {
       lorebook_names: bundle.lorebooks.map((x) => x.name),
       turn_count: bundle.session.turn_count,
       status: bundle.session.status,
+      channel_session_key: bundle.session.channel_session_key,
       summary_version: bundle.session.summary_version,
       created_at: bundle.session.created_at,
     });
