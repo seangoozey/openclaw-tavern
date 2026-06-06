@@ -13,6 +13,7 @@ export function normalizeMessageContext(raw = {}) {
     agentId: raw.agentId || raw.agent_id,
     sessionKey: raw.sessionKey || raw.session_key,
     workspaceDir: raw.workspaceDir || raw.workspace_dir,
+    userTurnAlreadyStored: Boolean(raw.userTurnAlreadyStored || raw.user_turn_already_stored),
   };
 }
 

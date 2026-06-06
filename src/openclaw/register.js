@@ -1387,6 +1387,16 @@ function appendNativeUserTurnOnce({ store, sessionManager, session, content }) {
   return userTurn;
 }
 
+function latestUserTurnMatches({ store, session, content }) {
+  const text = asString(content);
+  if (!store || !session?.id || !text || typeof store.getRecentTurns !== "function") {
+    return false;
+  }
+  const recent = store.getRecentTurns(session.id, 1);
+  const latest = Array.isArray(recent) ? recent[recent.length - 1] : null;
+  return latest?.role === "user" && latest?.content === text;
+}
+
 function storeEventMediaToCache(event, mediaCache) {
   const metadata = event?.metadata || {};
   const context = event?.context || {};
@@ -2944,7 +2954,18 @@ export default {
         return undefined;
       }
       await ensureInitialized();
-      const content = extractNativeUserContent(event, ctx);
+      let content = extractNativeUserContent(event, ctx);
+      let recoveredRpCtx = null;
+      if (!content) {
+        recoveredRpCtx = findRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, ctx);
+        content = asString(recoveredRpCtx?.userContent);
+        if (content) {
+          logOwnedTrace("recovered_content_from_active_context", {
+            sessionId: recoveredRpCtx?.session?.id,
+            content_preview: previewText(content, 120),
+          });
+        }
+      }
       if (!content || content.startsWith("/")) {
         logOwnedTrace(!content ? "no_content" : "slash_command_ignored", {
           content_preview: previewText(content || "", 120),
@@ -2952,13 +2973,18 @@ export default {
         return undefined;
       }
 
-      const routerCtx = buildHookRouterContext(
-        {
-          ...(event || {}),
-          content,
-        },
-        ctx || {},
-      );
+      const routerCtx = recoveredRpCtx?.routerCtx
+        ? {
+            ...recoveredRpCtx.routerCtx,
+            content,
+          }
+        : buildHookRouterContext(
+            {
+              ...(event || {}),
+              content,
+            },
+            ctx || {},
+          );
       const channelSessionKey = buildChannelSessionKey(routerCtx);
       logOwnedTrace("fired", {
         content_preview: previewText(content, 120),
@@ -2982,6 +3008,7 @@ export default {
       }
 
       cleanupOwnedNativeTurnCache();
+      const userTurnAlreadyStored = latestUserTurnMatches({ store, session, content });
       const cacheKey = buildOwnedNativeTurnKey({ hookName, event, ctx, routerCtx, session });
       const cached = ownedNativeTurnCache.get(cacheKey);
       if (cached) {
@@ -2993,7 +3020,10 @@ export default {
         return cached.result;
       }
 
-      const response = await router.handleMessage(routerCtx);
+      const response = await router.handleMessage({
+        ...routerCtx,
+        userTurnAlreadyStored,
+      });
       if (!response) {
         logOwnedTrace("router_no_response", {
           sessionId: session.id,

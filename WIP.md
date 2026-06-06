@@ -28,10 +28,44 @@ The agent should instead be initialized as an RP host/controller. The card chara
 - Live Telegram conversation reached 13 turns with reasonable character continuity.
 - `/rp init` is live-verified to write the correct agent's `IDENTITY.md` and `SOUL.md`.
 - Native hook injection still has some uncertainty due to optional hook availability and payload shape.
+- Live test with `nativeHooks.beforeAgentReply=true` shows `before_agent_reply` does fire on Telegram direct messages, but the hook payload can be contentless. The plugin now recovers the user text/router context from the preceding `message_received` RP context before trying to claim the turn.
 - `reply_payload_sending` is opt-in because the target OpenClaw Docker runtime logs it as unknown.
 - `llm_output` requires `plugins.entries.openclaw-rp-plugin.hooks.allowConversationAccess=true`.
 - `/rp sync-agent-persona` remains legacy/manual character override mode, not the default architecture.
 - `/rp` command output was converted to English for core command-router responses.
+
+## Parking Notes - 2026-06-06
+
+Current live conclusion:
+
+- The working Telegram path is still the prompt-injection bridge, not plugin-owned generation.
+- Live logs continue to show `message_received`, `before_prompt_build`, `before_message_write`, and `llm_output`.
+- Even with `nativeHooks.inboundClaim=true` and `/rp hooks-status` showing `inbound_claim: configured=yes registered=yes`, no `[openclaw-rp] inbound_claim: fired` or `claimed` logs appear for Telegram direct messages.
+- No `hook-debug.log` appears because owned-turn hook tracing only writes when the candidate claim hook actually fires. If `inbound_claim` does not fire, there is nothing to write.
+- Treat `inbound_claim` as not viable for Telegram direct messages in the current OpenClaw `v2026.5.27-beta.1` Docker runtime unless later evidence shows otherwise.
+
+Debug behavior to remember:
+
+- `/rp debug -on` creates the prompt/output trace file immediately.
+- Prompt/output debug files now belong under `<agent-workspace>/debug/`, for example `/home/node/.openclaw/rp-workspace/debug/rp-debug-trace-<session>.log`.
+- `/rp debug` also reports the plugin-state `hook-debug.log` path, but that file only gets entries if a claim hook fires.
+- Debug trace content is plugin-visible only: injected prompt/card/runtime state/user text plus observed raw/stored model output. It cannot show hidden OpenClaw/provider system wrappers added outside plugin hooks.
+
+Next live tests:
+
+- Disable `nativeHooks.inboundClaim`.
+- Enable `nativeHooks.beforeAgentReply` only, restart the real gateway/container process as needed, run `/rp hooks-status`, and send one normal RP message.
+- Look for `[openclaw-rp] before_agent_reply: fired` and `claimed`.
+- If `before_agent_reply` logs `recovered_content_from_active_context`, `fired`, and `claimed`, confirm whether OpenClaw suppresses the normal base-agent response and sends only the synthetic RP response.
+- If `before_agent_reply` fires but does not suppress the base-agent response, disable it and enable `nativeHooks.beforeAgentRun` only, then repeat.
+- If `before_agent_reply` does not fire in a future build, disable it and enable `nativeHooks.beforeAgentRun` only, then repeat.
+- If neither fires for Telegram, assume no pre-agent owned-generation hook is available on this runtime path and focus on either prompt architecture improvements or a Telegram-delivery bypass strategy.
+
+Architecture reminder:
+
+- The plugin already can call its own model provider through `SessionManager.processDialogue()`.
+- The unresolved issue is not generation capability; it is finding a native hook/delivery path that prevents the normal OpenClaw agent from also running.
+- Full-card injection every turn is likely too noisy. If owned generation remains unavailable, prioritize a prompt refactor that compiles the card into a smaller character profile and gives runtime state/identity guard higher priority than examples/full card prose.
 
 ## Target Runtime
 
@@ -68,9 +102,12 @@ Needed:
 - Define behavior for paused sessions: likely return a short paused notice rather than letting the base agent answer in-character.
 - Define behavior for ended sessions: release the channel back to the normal agent.
 - Claimed native turns are cached briefly by session/event/content so multiple candidate hooks do not store the same user message twice.
+- `before_agent_reply` may fire after `message_received` with no text in `event`/`ctx`. The owned-turn handler now recovers the active RP context created by `message_received` and passes `userTurnAlreadyStored` through the router/session manager so generation does not append the same user message twice.
 - Live Docker issue fixed in code: `before_prompt_build` may receive `channelId=<chatId>`, empty `conversationId`, and `sessionKey=agent:<id>:telegram:direct:<chatId>` while `message_received` stored `telegram:telegram:<chatId>`. Context lookup now derives candidate keys from the session key channel type.
 - Added high-signal owned-turn tracing for candidate claim hooks. `handleOwnedNativeRpTurn()` logs/records hook fired, no content, slash command ignored, resolved router context, channel session key, no active session, ended session, cached claim, router no response, and claimed response.
 - For live Docker, check for `[openclaw-rp] inbound_claim: fired` and `claimed` logs. If neither appears while `inbound_claim` is registered, OpenClaw is not firing the hook for Telegram direct messages.
+- Research note: GitHub issue `openclaw/openclaw#49748` says `inbound_claim` only fires for plugin-bound conversations via `runInboundClaimForPluginOutcome`; global `api.on("inbound_claim", ...)` handlers are not invoked for regular channel messages because the general dispatch path does not call broadcast `runInboundClaim`. The issue is closed as not planned. This matches the live finding: `inbound_claim` registers but never fires for normal Telegram direct messages.
+- Telegram/group binding with negative chat IDs may route a group/topic to a plugin-bound conversation, but that is a different mechanism from global channel interception. It may be useful only if we are willing to make RP run through a plugin-bound conversation rather than normal direct-agent Telegram routing.
 
 Acceptance tests:
 
@@ -182,11 +219,12 @@ Known observations:
 - `message_sending` appears to be available, but should not be foundational for the core RP illusion.
 - `before_prompt_build` is live-verified as the current working Docker bridge path.
 - `before_message_write` is live-verified blocking active RP writes to main OpenClaw history.
+- `before_agent_reply` is live-verified firing for Telegram direct messages when enabled, but initial payload shape was `no_content`; code now falls back to the active context from `message_received`.
 
 Needed:
 
 - Verify `inbound_claim`.
-- Verify `before_agent_reply`.
+- Verify whether `before_agent_reply` synthetic return actually blocks/suppresses the normal agent response in Docker.
 - Verify `before_agent_run`.
 - Verify whether decision returns can block/silence normal agent output in the installed Docker version.
 - Document exact `openclaw.json` config required for these hooks.

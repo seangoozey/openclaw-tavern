@@ -173,7 +173,7 @@ export class SessionManager {
     };
   }
 
-  async processDialogue({ channelSessionKey, userId, content }) {
+  async processDialogue({ channelSessionKey, userId, content, userTurnAlreadyStored = false }) {
     const session = this.store.getSessionByChannelKey(channelSessionKey);
     if (!session || session.user_id !== userId) {
       return null;
@@ -192,17 +192,19 @@ export class SessionManager {
         };
       }
 
-      const userTurn = this.store.appendTurn({
-        sessionId: current.id,
-        role: "user",
-        content,
-        tokenEstimate: this.tokenEstimator(content),
-      });
-      this.updateTextingPersonaState(current.id, {
-        type: "user_turn",
-        content,
-      });
-      await this.indexTurnEmbedding(current.id, userTurn);
+      if (!userTurnAlreadyStored) {
+        const userTurn = this.store.appendTurn({
+          sessionId: current.id,
+          role: "user",
+          content,
+          tokenEstimate: this.tokenEstimator(content),
+        });
+        this.updateTextingPersonaState(current.id, {
+          type: "user_turn",
+          content,
+        });
+        await this.indexTurnEmbedding(current.id, userTurn);
+      }
 
       const summaryResult = await this.maybeSummarize(current.id);
 

@@ -530,6 +530,7 @@ export class CommandRouter {
         channelSessionKey,
         userId: nctx.userId,
         content: nctx.content,
+        userTurnAlreadyStored: nctx.userTurnAlreadyStored,
       });
       if (!handled) {
         return null;
