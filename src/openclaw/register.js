@@ -212,6 +212,9 @@ function buildCommandContext(ctx) {
     to: ctx.to,
     from: ctx.from,
     messageThreadId: ctx.messageThreadId,
+    agentId: asString(ctx.agentId || ctx.agent_id || ctx.agent?.id) || extractAgentIdFromSessionKey(ctx.sessionKey || ctx.session_key),
+    sessionKey: ctx.sessionKey || ctx.session_key,
+    workspaceDir: ctx.workspaceDir || ctx.workspace_dir,
   };
 }
 
@@ -392,6 +395,13 @@ function createMediaCache() {
 
 function asString(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function previewText(value, max = 120) {
+  const text = String(value === undefined || value === null ? "" : value)
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > max ? `${text.slice(0, max - 1)}...` : text;
 }
 
 function pickAssistantTextFromLlmOutput(event) {
@@ -948,16 +958,16 @@ async function appendHookTrace(stateDir, payload) {
   await writeFile(file, `${line}\n`, { flag: "a" });
 }
 
-async function appendRpDebugTrace(stateDir, payload) {
-  if (!stateDir || !payload) {
+async function appendRpDebugTraceFile(filePath, payload) {
+  if (!filePath || !payload) {
     return;
   }
-  const file = path.join(stateDir, "rp-debug-trace.log");
+  await mkdir(path.dirname(filePath), { recursive: true });
   const line = JSON.stringify({
     at: new Date().toISOString(),
     ...payload,
   });
-  await writeFile(file, `${line}\n`, { flag: "a" });
+  await writeFile(filePath, `${line}\n`, { flag: "a" });
 }
 
 function escapeQuotedArg(value) {
@@ -2754,6 +2764,29 @@ export default {
       return nextConfig;
     }
 
+    function resolveRpDebugTracePath({ sessionId, ctx, event, rpCtx } = {}) {
+      const safeSessionId = String(sessionId || "unknown").replace(/[^A-Za-z0-9_.-]/g, "_");
+      const agentId = resolvePersonaAgentId(
+        ctx,
+        event,
+        rpCtx?.routerCtx,
+        { sessionKey: rpCtx?.agentSessionKey },
+      );
+      try {
+        const workspaceDir = resolvePersonaWorkspaceDir({
+          workspaceDir: ctx?.workspaceDir || ctx?.workspace_dir || rpCtx?.routerCtx?.workspaceDir,
+          apiConfig: api.config,
+          agentId,
+        });
+        if (workspaceDir) {
+          return path.join(workspaceDir, ".openclaw-rp", "debug", `rp-debug-trace-${safeSessionId}.log`);
+        }
+      } catch (err) {
+        api.logger?.warn?.(`[openclaw-rp] debug trace workspace resolution failed: ${String(err?.message || err)}`);
+      }
+      return stateDir ? path.join(stateDir, "debug", `rp-debug-trace-${safeSessionId}.log`) : null;
+    }
+
     async function ensureInitialized() {
       if (router) {
         return;
@@ -2804,7 +2837,7 @@ export default {
         logger: api.logger,
         getAgentImageConfig: getCurrentAgentImageConfig,
         updateAgentImageConfig,
-        getDebugTracePath: () => (stateDir ? path.join(stateDir, "rp-debug-trace.log") : null),
+        getDebugTracePath: (ctx, session) => resolveRpDebugTracePath({ sessionId: session?.id, ctx }),
       });
       router = plugin.services.router;
       sessionManager = plugin.services.sessionManager;
@@ -2867,12 +2900,35 @@ export default {
     }
 
     async function handleOwnedNativeRpTurn(hookName, event, ctx) {
+      const traceBase = {
+        hook: hookName,
+        event_id: asString(event?.id || event?.message_id || event?.metadata?.messageId || event?.metadata?.message_id),
+        ctx_channel_id: asString(ctx?.channelId),
+        ctx_conversation_id: asString(ctx?.conversationId),
+        ctx_session_key: asString(ctx?.sessionKey),
+      };
+      const logOwnedTrace = (reason, extra = {}) => {
+        api.logger?.info?.(`[openclaw-rp] ${hookName}: ${reason}${extra.sessionId ? ` session=${extra.sessionId}` : ""}${extra.channelSessionKey ? ` channelSessionKey=${extra.channelSessionKey}` : ""}`);
+        void appendHookTrace(stateDir, {
+          kind: "owned_native_turn",
+          reason,
+          ...traceBase,
+          ...extra,
+        }).catch((err) => {
+          api.logger?.warn?.(`[openclaw-rp] ${hookName}: hook trace write failed: ${String(err?.message || err)}`);
+        });
+      };
+
       if (!isRpAgentAllowed(event, ctx)) {
+        logOwnedTrace("agent_not_allowed");
         return undefined;
       }
       await ensureInitialized();
       const content = extractNativeUserContent(event, ctx);
       if (!content || content.startsWith("/")) {
+        logOwnedTrace(!content ? "no_content" : "slash_command_ignored", {
+          content_preview: previewText(content || "", 120),
+        });
         return undefined;
       }
 
@@ -2884,11 +2940,24 @@ export default {
         ctx || {},
       );
       const channelSessionKey = buildChannelSessionKey(routerCtx);
+      logOwnedTrace("fired", {
+        content_preview: previewText(content, 120),
+        channelSessionKey,
+        router_ctx: routerCtx,
+      });
       const session = store.getSessionByChannelKey(channelSessionKey);
       if (!session) {
+        logOwnedTrace("no_active_session", {
+          channelSessionKey,
+          router_ctx: routerCtx,
+        });
         return undefined;
       }
       if (session.status === "ended") {
+        logOwnedTrace("session_ended", {
+          sessionId: session.id,
+          channelSessionKey,
+        });
         return undefined;
       }
 
@@ -2897,11 +2966,19 @@ export default {
       const cached = ownedNativeTurnCache.get(cacheKey);
       if (cached) {
         api.logger?.info?.(`[openclaw-rp] ${hookName}: reusing owned RP reply for session ${session.id}`);
+        logOwnedTrace("cached_claim", {
+          sessionId: session.id,
+          channelSessionKey,
+        });
         return cached.result;
       }
 
       const response = await router.handleMessage(routerCtx);
       if (!response) {
+        logOwnedTrace("router_no_response", {
+          sessionId: session.id,
+          channelSessionKey,
+        });
         return undefined;
       }
       const text = asString(response?.data?.content) || formatResponseText(response);
@@ -2911,6 +2988,12 @@ export default {
         result,
       });
       api.logger?.info?.(`[openclaw-rp] ${hookName}: claimed owned RP turn for session ${session.id}`);
+      logOwnedTrace("claimed", {
+        sessionId: session.id,
+        channelSessionKey,
+        response_ok: response?.ok === true,
+        content_length: text.length,
+      });
       return result;
     }
 
@@ -3336,7 +3419,7 @@ export default {
         api.logger?.info?.(`[openclaw-rp] before_prompt_build: injecting RP prompt for session ${session.id}, systemPrompt=${systemPrompt.length}chars, context=${(prependContext || "").length}chars`);
 
         if (router?.isDebugTraceEnabled?.(session.id)) {
-          void appendRpDebugTrace(stateDir, {
+          void appendRpDebugTraceFile(resolveRpDebugTracePath({ sessionId: session.id, ctx, event, rpCtx }), {
             kind: "before_prompt_build",
             session_id: session.id,
             channel_key: rpCtx.channelKey || "",
@@ -3405,7 +3488,7 @@ export default {
           }
 
           if (router?.isDebugTraceEnabled?.(session.id)) {
-            void appendRpDebugTrace(stateDir, {
+            void appendRpDebugTraceFile(resolveRpDebugTracePath({ sessionId: session.id, ctx, event, rpCtx }), {
               kind: "llm_output",
               session_id: session.id,
               channel_key: rpCtx.channelKey || "",

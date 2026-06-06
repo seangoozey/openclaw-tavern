@@ -69,6 +69,8 @@ Needed:
 - Define behavior for ended sessions: release the channel back to the normal agent.
 - Claimed native turns are cached briefly by session/event/content so multiple candidate hooks do not store the same user message twice.
 - Live Docker issue fixed in code: `before_prompt_build` may receive `channelId=<chatId>`, empty `conversationId`, and `sessionKey=agent:<id>:telegram:direct:<chatId>` while `message_received` stored `telegram:telegram:<chatId>`. Context lookup now derives candidate keys from the session key channel type.
+- Added high-signal owned-turn tracing for candidate claim hooks. `handleOwnedNativeRpTurn()` logs/records hook fired, no content, slash command ignored, resolved router context, channel session key, no active session, ended session, cached claim, router no response, and claimed response.
+- For live Docker, check for `[openclaw-rp] inbound_claim: fired` and `claimed` logs. If neither appears while `inbound_claim` is registered, OpenClaw is not firing the hook for Telegram direct messages.
 
 Acceptance tests:
 
@@ -273,7 +275,7 @@ Current behavior:
 - `/rp state` and `/rp texting-state` show the active session, card/preset, turn counts, selected texting runtime state fields, companion schedule status, and pending delayed-message count.
 - `/rp queue` shows pending delayed messages for the active session. `-all` shows all pending delayed messages visible to the store; `-limit N` controls row count.
 - `/rp hooks-status` in native OpenClaw mode shows configured and registered hook status, including conversation access and optional hook flags.
-- `/rp debug` toggles per-session prompt/output tracing. Native OpenClaw mode writes JSONL entries to `rp-debug-trace.log` under the plugin state directory, capturing `before_prompt_build` system prompt/context/user content and `llm_output` raw/stored text while enabled.
+- `/rp debug` toggles per-session prompt/output tracing. Native OpenClaw mode writes JSONL entries to a session-specific `rp-debug-trace-<session>.log`, preferring the active agent workspace's `.openclaw-rp/debug/` directory and falling back to plugin state if the workspace cannot be resolved.
 - Debug trace is intentionally opt-in because it can contain complete private prompt, card, lore, memory, and user-message text.
 
 Follow-up:

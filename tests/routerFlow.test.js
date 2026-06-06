@@ -537,8 +537,12 @@ test("debug state and queue commands expose texting runtime details", async () =
 });
 
 test("debug trace command toggles active session tracing", async () => {
+  let pathRequest = null;
   const plugin = createRPPlugin({
-    getDebugTracePath: () => "/tmp/openclaw-rp/rp-debug-trace.log",
+    getDebugTracePath: (ctx, session) => {
+      pathRequest = { ctx, session };
+      return `/tmp/openclaw-rp/rp-debug-trace-${session.id}.log`;
+    },
     modelProvider: {
       async generate() {
         return { content: "assistant reply" };
@@ -558,7 +562,9 @@ test("debug trace command toggles active session tracing", async () => {
   assert.equal(enabled.response.ok, true);
   assert.equal(enabled.response.data.enabled, true);
   assert.match(enabled.response.data.text, /enabled: yes/);
-  assert.match(enabled.response.data.text, /rp-debug-trace\.log/);
+  assert.match(enabled.response.data.text, /rp-debug-trace-session_/);
+  assert.equal(pathRequest.ctx.channelId, "channel1");
+  assert.equal(pathRequest.session.id, enabled.response.data.session_id);
 
   const status = await plugin.hooks.message_received(makeCtx("/rp debug"));
   assert.equal(status.response.data.enabled, true);

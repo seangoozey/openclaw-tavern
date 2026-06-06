@@ -1103,7 +1103,7 @@ export class CommandRouter {
     const enabled = this.isDebugTraceEnabled(session.id);
     const tracePath =
       typeof this.getDebugTracePath === "function"
-        ? this.getDebugTracePath()
+        ? this.getDebugTracePath(ctx, session)
         : null;
     const lines = [
       "RP debug trace",

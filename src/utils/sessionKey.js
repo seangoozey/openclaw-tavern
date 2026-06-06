@@ -10,6 +10,9 @@ export function normalizeMessageContext(raw = {}) {
     to: raw.to,
     from: raw.from,
     messageThreadId: raw.messageThreadId || raw.message_thread_id,
+    agentId: raw.agentId || raw.agent_id,
+    sessionKey: raw.sessionKey || raw.session_key,
+    workspaceDir: raw.workspaceDir || raw.workspace_dir,
   };
 }
 
