@@ -10,6 +10,7 @@ import { retryWithBackoff } from "./retry.js";
 import { InMemoryRateLimiter } from "./rateLimiter.js";
 import { DEFAULT_PRESET, DEFAULT_PRESET_NAME } from "./defaultPreset.js";
 import { cleanCardText, extractDialogueForTts, replacePlaceholders, stripHtml } from "../utils/textCleaner.js";
+import { PLUGIN_NAME, PLUGIN_VERSION } from "../version.js";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -166,6 +167,7 @@ function helpText() {
     "  /rp delete-asset <ID> -confirm",
     "",
     "Session control",
+    "  /rp -version    Show plugin version",
     "  /rp start [-card <name_or_id>] [-preset <name_or_id>] [-lorebook <name_or_id> ...]",
     "                  Without -card, starts the newest imported card.",
     "  /rp session     Show the current session",
@@ -548,6 +550,14 @@ export class CommandRouter {
     switch (command) {
       case "help":
         return ok("Help", { text: helpText() });
+      case "version":
+      case "-version":
+      case "--version":
+        return ok("Version", {
+          text: `${PLUGIN_NAME} v${PLUGIN_VERSION}`,
+          plugin: PLUGIN_NAME,
+          version: PLUGIN_VERSION,
+        });
       case "import-card":
         return this.importAsset(nctx, RP_ASSET_TYPES.CARD, options);
       case "import-preset":

@@ -37,6 +37,15 @@ test("core command responses default to English", async () => {
   assertEnglishCommandText(r.response.data.text);
   assert.match(r.response.data.text, /RP commands/);
 
+  r = await plugin.hooks.message_received(makeCtx("/rp -version"));
+  assert.equal(r.response.ok, true);
+  assertEnglishCommandText(r.response.data.text);
+  assert.match(r.response.data.text, /^openclaw-rp-plugin v\d+\.\d+\.\d+/);
+
+  r = await plugin.hooks.message_received(makeCtx("/rp version"));
+  assert.equal(r.response.ok, true);
+  assert.equal(r.response.data.plugin, "openclaw-rp-plugin");
+
   r = await plugin.hooks.message_received(makeCtx("/rp list-assets"));
   assert.equal(r.response.ok, true);
   assertEnglishCommandText(r.response.message);
