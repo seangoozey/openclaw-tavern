@@ -107,6 +107,18 @@ export const openclawRpPluginConfigSchema = {
         },
       },
     },
+    agentHarness: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        diagnostics: {
+          type: "boolean",
+          default: false,
+          description:
+            "Opt in to a non-claiming diagnostic agent harness that logs resolved provider/model support context for active OpenClaw turns.",
+        },
+      },
+    },
   },
 };
 

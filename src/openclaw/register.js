@@ -2113,6 +2113,35 @@ function firstNonEmptyValue(values) {
   return undefined;
 }
 
+function resolveConfigString(value, rootConfig = {}) {
+  if (typeof value !== "string") {
+    return value;
+  }
+  const trimmed = value.trim();
+  const envMatch = trimmed.match(/^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/);
+  if (envMatch) {
+    return process.env[envMatch[1]] || rootConfig?.env?.[envMatch[1]] || "";
+  }
+  return trimmed;
+}
+
+function parseModelRef(value) {
+  const raw = asString(value);
+  const slash = raw.indexOf("/");
+  if (slash <= 0 || slash >= raw.length - 1) {
+    return {
+      providerId: "",
+      modelId: raw,
+      raw,
+    };
+  }
+  return {
+    providerId: raw.slice(0, slash),
+    modelId: raw.slice(slash + 1),
+    raw,
+  };
+}
+
 export function createTelegramBotApiRuntime({ botToken, apiBaseUrl = "https://api.telegram.org", timeoutMs = 15000 } = {}) {
   const token = asString(botToken);
   if (!token) {
@@ -2227,6 +2256,13 @@ function isNativeHookEnabled(api, key) {
   return pluginConfig?.nativeHooks?.[key] === true;
 }
 
+function isAgentHarnessDiagnosticsEnabled(api) {
+  const openclawConfig = loadOpenClawFileConfig();
+  const rootConfig = mergeConfigObjects(openclawConfig, api?.config);
+  const pluginConfig = getOpenClawRpPluginConfig(rootConfig);
+  return pluginConfig?.agentHarness?.diagnostics === true;
+}
+
 function pickConfigValue(source, paths) {
   const values = [];
   for (const pathTokens of paths) {
@@ -2247,6 +2283,19 @@ function normalizeProviderHint(value) {
 
 function extractInheritedProviderConfig(apiConfig) {
   const cfg = isObject(apiConfig) ? apiConfig : {};
+  const primaryModelRef = pickConfigValue(cfg, [
+    ["agents", "defaults", "model", "primary"],
+    ["agents", "defaults", "model"],
+    ["agent", "model", "primary"],
+    ["agent", "model"],
+    ["model", "primary"],
+    ["model"],
+    ["llm", "model"],
+    ["chat", "model"],
+    ["ai", "model"],
+    ["default_model"],
+  ]);
+  const parsedPrimaryModelRef = parseModelRef(primaryModelRef);
   const providerHint = normalizeProviderHint(
     pickConfigValue(cfg, [
       ["provider"],
@@ -2256,16 +2305,11 @@ function extractInheritedProviderConfig(apiConfig) {
       ["ai", "provider"],
       ["providers", "default"],
       ["llm_provider"],
-    ]),
+      ["models", "defaultProvider"],
+    ]) || parsedPrimaryModelRef.providerId,
   );
 
-  const globalModel = pickConfigValue(cfg, [
-    ["model"],
-    ["llm", "model"],
-    ["chat", "model"],
-    ["ai", "model"],
-    ["default_model"],
-  ]);
+  const globalModel = parsedPrimaryModelRef.modelId || primaryModelRef;
 
   const openai = {
     apiKey: pickConfigValue(cfg, [
@@ -2378,9 +2422,61 @@ function extractInheritedProviderConfig(apiConfig) {
 
   return {
     providerHint,
+    primaryModelRef: parsedPrimaryModelRef,
     openai,
     gemini,
   };
+}
+
+function resolveOpenClawCustomProviderConfig(rootConfig, inherited, overrides = {}) {
+  const forcedModelRef = parseModelRef(overrides.model);
+  const primary = forcedModelRef.raw ? forcedModelRef : inherited.primaryModelRef;
+  const providerId = asString(primary?.providerId);
+  if (!providerId) {
+    return null;
+  }
+  const provider = rootConfig?.models?.providers?.[providerId];
+  if (!isObject(provider)) {
+    return null;
+  }
+  const api = asString(provider.api || provider.type || "openai-completions").toLowerCase();
+  const isOpenAiCompatible =
+    !api ||
+    api === "openai" ||
+    api === "openai-completions" ||
+    api === "openai-chat-completions" ||
+    api === "openai-responses";
+  if (!isOpenAiCompatible) {
+    return null;
+  }
+
+  const firstModel = Array.isArray(provider.models)
+    ? provider.models.find((item) => asString(item?.id))
+    : null;
+  const model = asString(primary.modelId) || asString(provider.model) || asString(firstModel?.id);
+  const apiKey = resolveConfigString(provider.apiKey || provider.api_key, rootConfig);
+  const baseUrl =
+    asString(provider.baseUrl) ||
+    asString(provider.base_url) ||
+    asString(provider.endpoint) ||
+    asString(provider.url);
+
+  if (!baseUrl && !apiKey) {
+    return null;
+  }
+
+  return createOpenAICompatibleProviders({
+    apiKey,
+    baseUrl,
+    model,
+    embeddingModel:
+      asString(provider.embeddingModel) ||
+      asString(provider.embedding_model) ||
+      asString(provider.embeddings?.model),
+    chatTimeoutMs: toPositiveNumber(provider.timeoutMs || provider.timeout_ms, undefined) ||
+      (toPositiveNumber(provider.timeoutSeconds || provider.timeout_seconds, 0) * 1000 || undefined),
+    imageModel: overrides.imageModel || asString(provider.imageModel) || asString(provider.image_model),
+  });
 }
 
 function resolveProviderConfig(apiConfig, overrides = {}) {
@@ -2391,6 +2487,10 @@ function resolveProviderConfig(apiConfig, overrides = {}) {
   const pluginConfig = getOpenClawRpPluginConfig(rootConfig);
   const providerConfigView = mergeConfigObjects(rootConfig, pluginConfig);
   const inherited = extractInheritedProviderConfig(providerConfigView);
+  const inheritedCustomProvider = resolveOpenClawCustomProviderConfig(rootConfig, inherited, overrides);
+  if (inheritedCustomProvider?.modelProvider?.generate) {
+    return inheritedCustomProvider;
+  }
   const forcedProvider = normalizeProviderHint(overrides.provider);
   const explicitProvider = normalizeProviderHint(
     firstNonEmptyValue([
@@ -2405,13 +2505,13 @@ function resolveProviderConfig(apiConfig, overrides = {}) {
       : inherited.providerHint || explicitProvider;
 
   const geminiApiKey =
-    inherited.gemini.apiKey ||
-    fileConfig.gemini_api_key ||
+    resolveConfigString(inherited.gemini.apiKey, rootConfig) ||
+    resolveConfigString(fileConfig.gemini_api_key, rootConfig) ||
     process.env.OPENCLAW_RP_GEMINI_API_KEY ||
     process.env.GEMINI_API_KEY;
   const openaiApiKey =
-    inherited.openai.apiKey ||
-    fileConfig.openai_api_key ||
+    resolveConfigString(inherited.openai.apiKey, rootConfig) ||
+    resolveConfigString(fileConfig.openai_api_key, rootConfig) ||
     process.env.OPENCLAW_RP_OPENAI_API_KEY ||
     process.env.OPENAI_API_KEY;
 
@@ -2656,6 +2756,7 @@ export default {
     const pendingOutboundTextingRewrites = new Map();
     const ownedNativeTurnCache = new Map();
     const registeredNativeHooks = new Set();
+    let registeredAgentHarness = false;
     const rpContextTtlMs = 120000;
     const outboundRewriteTtlMs = 120000;
     const ownedNativeTurnTtlMs = 120000;
@@ -2686,6 +2787,11 @@ export default {
     }
 
     function buildHooksStatusResponse() {
+      const agentHarness = {
+        configured: isAgentHarnessDiagnosticsEnabled(api),
+        available: typeof api.registerAgentHarness === "function",
+        registered: registeredAgentHarness,
+      };
       const nativeHooks = {
         inbound_claim: {
           configured: isNativeHookEnabled(api, "inboundClaim"),
@@ -2731,6 +2837,7 @@ export default {
       const lines = [
         "OpenClaw RP hook status",
         `- conversation access: ${hasConversationHookAccess(api) ? "enabled" : "disabled"}`,
+        `- agent_harness_diagnostics: configured=${agentHarness.configured ? "yes" : "no"} available=${agentHarness.available ? "yes" : "no"} registered=${agentHarness.registered ? "yes" : "no"}`,
       ];
       for (const [name, status] of Object.entries(nativeHooks)) {
         lines.push(`- ${name}: configured=${status.configured ? "yes" : "no"} registered=${status.registered ? "yes" : "no"}`);
@@ -2741,6 +2848,7 @@ export default {
         data: {
           text: lines.join("\n"),
           native_hooks: nativeHooks,
+          agent_harness: agentHarness,
           conversation_access: hasConversationHookAccess(api),
         },
       };
@@ -2945,6 +3053,65 @@ export default {
       };
     }
 
+    function summarizeAgentHarnessValue(value, depth = 0) {
+      if (value === null || value === undefined) {
+        return value;
+      }
+      if (typeof value === "string") {
+        return previewText(value, 180);
+      }
+      if (typeof value === "number" || typeof value === "boolean") {
+        return value;
+      }
+      if (Array.isArray(value)) {
+        return `[array:${value.length}]`;
+      }
+      if (typeof value === "object") {
+        if (depth >= 2) {
+          return `{object:${Object.keys(value).length}}`;
+        }
+        const out = {};
+        for (const [key, item] of Object.entries(value)) {
+          if (["prompt", "messages", "tools", "images", "transcript"].includes(key)) {
+            out[key] = Array.isArray(item) ? `[array:${item.length}]` : `{object:${Object.keys(item || {}).length}}`;
+          } else {
+            out[key] = summarizeAgentHarnessValue(item, depth + 1);
+          }
+        }
+        return out;
+      }
+      return String(value);
+    }
+
+    function registerDiagnosticAgentHarness() {
+      if (!isAgentHarnessDiagnosticsEnabled(api)) {
+        return;
+      }
+      if (typeof api.registerAgentHarness !== "function") {
+        api.logger?.warn?.("[openclaw-rp] agent harness diagnostics requested but api.registerAgentHarness is unavailable");
+        return;
+      }
+      api.registerAgentHarness({
+        id: "openclaw-rp-diagnostic",
+        label: "OpenClaw RP diagnostic harness",
+        supports(ctx = {}) {
+          const summary = summarizeAgentHarnessValue(ctx);
+          api.logger?.info?.(`[openclaw-rp] agent_harness.supports diagnostic ${JSON.stringify(summary)}`);
+          return {
+            supported: false,
+            reason: "diagnostic_only",
+          };
+        },
+        async runAttempt(params = {}) {
+          const summary = summarizeAgentHarnessValue(params);
+          api.logger?.warn?.(`[openclaw-rp] diagnostic agent harness runAttempt was called unexpectedly ${JSON.stringify(summary)}`);
+          throw new Error("OpenClaw RP diagnostic harness does not claim turns");
+        },
+      });
+      registeredAgentHarness = true;
+      api.logger?.info?.("[openclaw-rp] registered diagnostic agent harness");
+    }
+
     async function handleOwnedNativeRpTurn(hookName, event, ctx) {
       const traceBase = {
         hook: hookName,
@@ -3036,6 +3203,14 @@ export default {
         return cached.result;
       }
 
+      if (!router?.modelProvider?.generate) {
+        logOwnedTrace("model_provider_unavailable", {
+          sessionId: session.id,
+          channelSessionKey,
+        });
+        return undefined;
+      }
+
       const response = await router.handleMessage({
         ...routerCtx,
         userTurnAlreadyStored,
@@ -3078,6 +3253,8 @@ export default {
     } else {
       api.logger?.warn?.("[openclaw-rp] api.registerTool unavailable; native agent image tool disabled");
     }
+
+    registerDiagnosticAgentHarness();
 
     api.registerCommand({
       name: "rp",

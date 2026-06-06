@@ -29,7 +29,7 @@ The agent should instead be initialized as an RP host/controller. The card chara
 - `/rp init` is live-verified to write the correct agent's `IDENTITY.md` and `SOUL.md`.
 - Native hook injection still has some uncertainty due to optional hook availability and payload shape.
 - Live test with `nativeHooks.beforeAgentReply=true` shows `before_agent_reply` does fire on Telegram direct messages, but the hook payload can be contentless. The plugin now recovers the user text/router context from the preceding `message_received` RP context before trying to claim the turn.
-- Live follow-up showed `before_agent_reply hook failed: Model provider is not configured`. That means the owned-generation hook path is being reached, but plugin-owned generation needs its own provider config. Resolver support was expanded so plugin-local provider config under `plugins.entries.openclaw-rp-plugin.config` is recognized, and file/runtime OpenClaw config is merged instead of a partial `api.config` hiding `~/.openclaw/openclaw.json`.
+- Live follow-up showed `before_agent_reply hook failed: Model provider is not configured`. That meant the owned-generation hook path was being reached, but plugin-owned generation had no provider. Provider resolution should inherit ordinary OpenClaw model config first, including current `agents.defaults.model.primary` plus `models.providers` custom provider shape. Plugin-local provider config under `plugins.entries.openclaw-rp-plugin.config` is only an optional override/debug escape hatch, not a requirement. If no provider is configured or visible, candidate owned-turn hooks decline with `model_provider_unavailable` instead of throwing, leaving the prompt-injection bridge available.
 - `reply_payload_sending` is opt-in because the target OpenClaw Docker runtime logs it as unknown.
 - `llm_output` requires `plugins.entries.openclaw-rp-plugin.hooks.allowConversationAccess=true`.
 - `/rp sync-agent-persona` remains legacy/manual character override mode, not the default architecture.
@@ -58,7 +58,7 @@ Next live tests:
 - Enable `nativeHooks.beforeAgentReply` only, restart the real gateway/container process as needed, run `/rp hooks-status`, and send one normal RP message.
 - Look for `[openclaw-rp] before_agent_reply: fired` and `claimed`.
 - If `before_agent_reply` logs `recovered_content_from_active_context`, `fired`, and `claimed`, confirm whether OpenClaw suppresses the normal base-agent response and sends only the synthetic RP response.
-- If `before_agent_reply` reaches generation but logs `Model provider is not configured`, add OpenAI-compatible or Gemini config under `plugins.entries.openclaw-rp-plugin.config` or verify the global OpenClaw provider config is visible to the plugin process.
+- If `before_agent_reply` logs `model_provider_unavailable`, the hook is working but cannot claim because plugin-owned generation cannot see a usable OpenClaw provider. First verify normal `~/.openclaw/openclaw.json` provider/model config is visible to the plugin process; plugin-local provider config remains optional and should not be needed for ordinary setups.
 - If `before_agent_reply` fires but does not suppress the base-agent response, disable it and enable `nativeHooks.beforeAgentRun` only, then repeat.
 - If `before_agent_reply` does not fire in a future build, disable it and enable `nativeHooks.beforeAgentRun` only, then repeat.
 - If neither fires for Telegram, assume no pre-agent owned-generation hook is available on this runtime path and focus on either prompt architecture improvements or a Telegram-delivery bypass strategy.
@@ -68,6 +68,7 @@ Architecture reminder:
 - The plugin already can call its own model provider through `SessionManager.processDialogue()`.
 - The unresolved issue is not generation capability; it is finding a native hook/delivery path that prevents the normal OpenClaw agent from also running.
 - Full-card injection every turn is likely too noisy. If owned generation remains unavailable, prioritize a prompt refactor that compiles the card into a smaller character profile and gives runtime state/identity guard higher priority than examples/full card prose.
+- Agent harness route is the next investigation. OpenClaw docs say harness selection happens after provider/model/auth/runtime plan resolution, which is the right layer if we need the current channel agent's effective model rather than defaults. Added opt-in non-claiming diagnostics under `plugins.entries.openclaw-rp-plugin.config.agentHarness.diagnostics=true` to log `agent_harness.supports` context without taking over turns.
 
 ## Target Runtime
 
@@ -110,6 +111,7 @@ Needed:
 - For live Docker, check for `[openclaw-rp] inbound_claim: fired` and `claimed` logs. If neither appears while `inbound_claim` is registered, OpenClaw is not firing the hook for Telegram direct messages.
 - Research note: GitHub issue `openclaw/openclaw#49748` says `inbound_claim` only fires for plugin-bound conversations via `runInboundClaimForPluginOutcome`; global `api.on("inbound_claim", ...)` handlers are not invoked for regular channel messages because the general dispatch path does not call broadcast `runInboundClaim`. The issue is closed as not planned. This matches the live finding: `inbound_claim` registers but never fires for normal Telegram direct messages.
 - Telegram/group binding with negative chat IDs may route a group/topic to a plugin-bound conversation, but that is a different mechanism from global channel interception. It may be useful only if we are willing to make RP run through a plugin-bound conversation rather than normal direct-agent Telegram routing.
+- Agent harness diagnostic mode is now available. It registers `openclaw-rp-diagnostic` only when `agentHarness.diagnostics=true`; `supports(ctx)` logs a sanitized context summary and returns unsupported. This is intentionally non-claiming until live Docker proves what context fields are available and whether active RP sessions can be detected at harness-selection time.
 
 Acceptance tests:
 
@@ -118,6 +120,7 @@ Acceptance tests:
 - Paused RP session: no character reply is generated.
 - Ended RP session: normal agent flow can resume.
 - User message is stored exactly once even if multiple hooks fire.
+- Harness diagnostics do not claim turns and expose resolved provider/model context when OpenClaw calls `supports(ctx)`.
 
 ### 2. Host Agent Initialization
 

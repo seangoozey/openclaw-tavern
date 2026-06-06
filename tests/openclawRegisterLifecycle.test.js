@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import registerModule from "../src/openclaw/register.js";
 
-function makeApi({ stateDir, config = {}, hooks = new Map(), commands = new Map(), services = new Map(), logger = null } = {}) {
+function makeApi({ stateDir, config = {}, hooks = new Map(), commands = new Map(), services = new Map(), logger = null, harnesses = null } = {}) {
   return {
     config,
     logger,
@@ -24,6 +24,9 @@ function makeApi({ stateDir, config = {}, hooks = new Map(), commands = new Map(
       services.set(service.id, service);
     },
     registerTool() {},
+    registerAgentHarness(harness) {
+      harnesses?.set(harness.id, harness);
+    },
     on(name, handler) {
       hooks.set(name, handler);
     },
@@ -203,6 +206,74 @@ test("/rp hooks-status reports configured and registered native hooks", async ()
     assert.match(result.text, /inbound_claim: configured=yes registered=yes/);
     assert.match(result.text, /llm_output: configured=yes registered=yes/);
     assert.match(result.text, /reply_payload_sending: configured=no registered=no/);
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("agent harness diagnostics registers a non-claiming harness when enabled", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const commands = new Map();
+  const services = new Map();
+  const hooks = new Map();
+  const harnesses = new Map();
+  const infoLogs = [];
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        services,
+        hooks,
+        harnesses,
+        logger: {
+          info(message) {
+            infoLogs.push(String(message || ""));
+          },
+          warn() {},
+        },
+        config: {
+          plugins: {
+            entries: {
+              "openclaw-rp-plugin": {
+                config: {
+                  agentHarness: {
+                    diagnostics: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const harness = harnesses.get("openclaw-rp-diagnostic");
+    assert.ok(harness);
+    const support = harness.supports({
+      provider: "openai",
+      model: "gpt-5.5",
+      sessionId: "session_test",
+      runtimePlan: {
+        observability: {
+          provider: "openai",
+          model: "gpt-5.5",
+        },
+      },
+      prompt: {
+        messages: [{ role: "user", content: "hello" }],
+      },
+    });
+    assert.equal(support.supported, false);
+    assert.equal(support.reason, "diagnostic_only");
+    assert.equal(infoLogs.some((item) => item.includes("agent_harness.supports diagnostic")), true);
+
+    const rp = commands.get("rp");
+    const result = await rp.handler({ commandBody: "/rp hooks-status" });
+    assert.equal(result.isError, undefined);
+    assert.match(result.text, /agent_harness_diagnostics: configured=yes available=yes registered=yes/);
   } finally {
     services.get("openclaw-rp-sqlite")?.stop();
     await rm(stateDir, { recursive: true, force: true });
@@ -430,17 +501,35 @@ test("owned native RP hook claims active session turn and caches duplicate hooks
         hooks,
         services,
         config: {
+          env: {
+            RP_HOOK_TEST_KEY: "test-key",
+          },
+          agents: {
+            defaults: {
+              model: {
+                primary: "rp-hook-test/test-chat",
+              },
+            },
+          },
+          models: {
+            providers: {
+              "rp-hook-test": {
+                api: "openai-completions",
+                apiKey: "${RP_HOOK_TEST_KEY}",
+                baseUrl: "https://rp-hook-test.invalid/v1",
+                models: [
+                  {
+                    id: "test-chat",
+                    name: "Test Chat",
+                  },
+                ],
+              },
+            },
+          },
           plugins: {
             entries: {
               "openclaw-rp-plugin": {
                 config: {
-                  provider: "openai",
-                  openai: {
-                    apiKey: "test-key",
-                    baseUrl: "https://rp-hook-test.invalid/v1",
-                    model: "test-chat",
-                    embeddingModel: "test-embed",
-                  },
                   nativeHooks: {
                     inboundClaim: true,
                     beforeAgentReply: true,
@@ -517,6 +606,102 @@ test("owned native RP hook claims active session turn and caches duplicate hooks
   } finally {
     services.get("openclaw-rp-sqlite")?.stop();
     globalThis.fetch = originalFetch;
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(assetDir, { recursive: true, force: true });
+  }
+});
+
+test("owned native RP hook skips without warning when model provider is unavailable", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));
+  const commands = new Map();
+  const hooks = new Map();
+  const services = new Map();
+  const warnings = [];
+  const cardPath = path.join(assetDir, "nina.json");
+  await writeFile(
+    cardPath,
+    JSON.stringify({
+      name: "Nina",
+      description: "Nina answers like a dry-humored night owl.",
+      first_mes: "still up?",
+    }),
+    "utf8",
+  );
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        hooks,
+        services,
+        logger: {
+          info() {},
+          warn(message) {
+            warnings.push(String(message || ""));
+          },
+        },
+        config: {
+          plugins: {
+            entries: {
+              "openclaw-rp-plugin": {
+                config: {
+                  nativeHooks: {
+                    beforeAgentReply: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+    assert.equal(hooks.has("before_agent_reply"), true);
+
+    const rp = commands.get("rp");
+    const baseCtx = {
+      channel: "telegram",
+      channelId: "telegram",
+      conversationId: "555",
+      senderId: "u1",
+      from: "u1",
+      commandBody: "",
+    };
+
+    let result = await rp.handler({
+      ...baseCtx,
+      commandBody: `/rp import-card --file "${cardPath}"`,
+    });
+    assert.equal(result.isError, undefined);
+    result = await rp.handler({
+      ...baseCtx,
+      commandBody: "/rp start --card Nina",
+    });
+    assert.equal(result.isError, undefined);
+
+    const hookCtx = {
+      channelId: "telegram",
+      conversationId: "555",
+      senderId: "u1",
+      sessionKey: "agent:main:telegram:direct:555",
+    };
+    await hooks.get("message_received")(
+      {
+        id: "msg-1",
+        content: "you awake?",
+        metadata: {
+          senderId: "u1",
+        },
+      },
+      hookCtx,
+    );
+    const resultFromHook = await hooks.get("before_agent_reply")({}, hookCtx);
+    assert.equal(resultFromHook, undefined);
+    assert.equal(warnings.some((item) => item.includes("before_agent_reply hook failed")), false);
+    assert.equal(warnings.some((item) => item.includes("Model provider is not configured")), false);
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
     await rm(stateDir, { recursive: true, force: true });
     await rm(assetDir, { recursive: true, force: true });
   }
