@@ -235,6 +235,22 @@ test("agent harness diagnostics registers a non-claiming harness when enabled", 
           warn() {},
         },
         config: {
+          agents: {
+            defaults: {
+              model: {
+                primary: "openrouter/z-ai/glm-4.7-flash",
+              },
+            },
+          },
+          models: {
+            providers: {
+              openrouter: {
+                api: "openai-completions",
+                baseUrl: "https://openrouter.invalid/v1",
+                models: [{ id: "z-ai/glm-4.7-flash" }],
+              },
+            },
+          },
           plugins: {
             entries: {
               "openclaw-rp-plugin": {

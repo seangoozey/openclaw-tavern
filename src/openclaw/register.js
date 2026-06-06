@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { asRPError } from "../errors.js";
+import { RP_ERROR_CODES } from "../types.js";
 import { createRPPlugin } from "../plugin.js";
 import { createOpenAICompatibleProviders } from "../providers/openaiCompatible.js";
 import { createGeminiProviders } from "../providers/gemini.js";
@@ -2142,6 +2143,15 @@ function parseModelRef(value) {
   };
 }
 
+function isLocalBaseUrl(value) {
+  try {
+    const u = new URL(asString(value));
+    return ["localhost", "127.0.0.1", "::1"].includes(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
 export function createTelegramBotApiRuntime({ botToken, apiBaseUrl = "https://api.telegram.org", timeoutMs = 15000 } = {}) {
   const token = asString(botToken);
   if (!token) {
@@ -2462,6 +2472,9 @@ function resolveOpenClawCustomProviderConfig(rootConfig, inherited, overrides = 
     asString(provider.url);
 
   if (!baseUrl && !apiKey) {
+    return null;
+  }
+  if (baseUrl && !apiKey && !isLocalBaseUrl(baseUrl)) {
     return null;
   }
 
@@ -3169,11 +3182,6 @@ export default {
             ctx || {},
           );
       let channelSessionKey = buildChannelSessionKey(routerCtx);
-      logOwnedTrace("fired", {
-        content_preview: previewText(content, 120),
-        channelSessionKey,
-        router_ctx: routerCtx,
-      });
       let session = null;
       if (recoveredRpCtx?.session?.id) {
         session = store.getSessionById(recoveredRpCtx.session.id);
@@ -3204,6 +3212,12 @@ export default {
         });
         return undefined;
       }
+      logOwnedTrace("fired", {
+        sessionId: session.id,
+        content_preview: previewText(content, 120),
+        channelSessionKey,
+        router_ctx: routerCtx,
+      });
 
       cleanupOwnedNativeTurnCache();
       const userTurnAlreadyStored = latestUserTurnMatches({ store, session, content });
@@ -3226,10 +3240,24 @@ export default {
         return undefined;
       }
 
-      const response = await router.handleMessage({
-        ...routerCtx,
-        userTurnAlreadyStored,
-      });
+      let response = null;
+      try {
+        response = await router.handleMessage({
+          ...routerCtx,
+          userTurnAlreadyStored,
+        });
+      } catch (err) {
+        const rpErr = asRPError(err);
+        if (rpErr.code === RP_ERROR_CODES.MODEL_UNAVAILABLE) {
+          logOwnedTrace("owned_generation_unavailable", {
+            sessionId: session.id,
+            channelSessionKey,
+            error: String(rpErr.message || ""),
+          });
+          return undefined;
+        }
+        throw err;
+      }
       if (!response) {
         logOwnedTrace("router_no_response", {
           sessionId: session.id,
