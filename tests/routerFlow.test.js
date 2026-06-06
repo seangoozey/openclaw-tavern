@@ -106,6 +106,29 @@ test("start session and chat flow", async () => {
   assert.equal(r.response.ok, true);
 });
 
+test("start defaults to the most recently imported card in the channel", async () => {
+  const plugin = createRPPlugin({
+    modelProvider: {
+      async generate() {
+        return { content: "assistant reply" };
+      },
+    },
+  });
+
+  let r = await plugin.hooks.message_received(
+    makeCtx("/rp import-card", {
+      attachments: [{ filename: "alice.json", buffer: Buffer.from(JSON.stringify({ name: "Alice", first_mes: "hi" })) }],
+    }),
+  );
+  assert.equal(r.response.ok, true);
+  assert.match(r.response.message, /Next: \/rp start/);
+
+  r = await plugin.hooks.message_received(makeCtx("/rp start"));
+  assert.equal(r.response.ok, true);
+  assert.equal(r.response.data.card_name, "Alice");
+  assert.equal(r.response.data.followup_text, "hi");
+});
+
 test("import card from --file path", async () => {
   const plugin = createRPPlugin({
     modelProvider: {
@@ -463,4 +486,43 @@ test("delayed texting message can generate and append assistant turn", async () 
   const turns = plugin.services.store.getTurns(sessionId);
   assert.equal(turns.at(-1).role, "assistant");
   assert.equal(turns.at(-1).content, generated.text);
+});
+
+test("debug state and queue commands expose texting runtime details", async () => {
+  const plugin = createRPPlugin({
+    modelProvider: {
+      async generate() {
+        return { content: "this should not be generated immediately" };
+      },
+    },
+  });
+
+  let r = await plugin.hooks.message_received(
+    makeCtx("/rp import-card", {
+      attachments: [{ filename: "Sleepy", buffer: Buffer.from(JSON.stringify(sleepingTextingCardPayload())) }],
+    }),
+  );
+  const cardId = r.response.data.asset_id;
+
+  r = await plugin.hooks.message_received(
+    makeCtx("/rp import-preset", {
+      attachments: [{ filename: "preset.json", buffer: Buffer.from(JSON.stringify({ temperature: 0.7 })) }],
+    }),
+  );
+  const presetId = r.response.data.asset_id;
+
+  await plugin.hooks.message_received(makeCtx(`/rp start -card ${cardId} -preset ${presetId}`));
+  await plugin.hooks.message_received(makeCtx("you awake?"));
+
+  const state = await plugin.hooks.message_received(makeCtx("/rp state"));
+  assert.equal(state.response.ok, true);
+  assert.match(state.response.data.text, /RP debug state/);
+  assert.match(state.response.data.text, /attention_level: asleep/);
+  assert.equal(state.response.data.pending_delayed_messages.length, 1);
+
+  const queue = await plugin.hooks.message_received(makeCtx("/rp queue"));
+  assert.equal(queue.response.ok, true);
+  assert.match(queue.response.data.text, /Pending RP delayed messages/);
+  assert.match(queue.response.data.text, /texting_delayed_reply/);
+  assert.equal(queue.response.data.messages.length, 1);
 });

@@ -24,11 +24,14 @@ The agent should instead be initialized as an RP host/controller. The card chara
 - Runtime state is persisted per session in plugin storage.
 - Plugin-owned `/rp` generation path can build prompts, call a model provider, store turns, and normalize texting output.
 - `/rp start` can import/start a card and emit the card's first message.
-- Native hook injection has been fragile in Docker due to hook availability, hook ordering, permission gates, and payload shape.
+- Docker prompt-injection path is live-verified on Telegram: user turns append to plugin SQLite, `before_prompt_build` injects RP context, `before_message_write` blocks main OpenClaw history, and `llm_output` appends assistant turns.
+- Live Telegram conversation reached 13 turns with reasonable character continuity.
+- `/rp init` is live-verified to write the correct agent's `IDENTITY.md` and `SOUL.md`.
+- Native hook injection still has some uncertainty due to optional hook availability and payload shape.
 - `reply_payload_sending` is opt-in because the target OpenClaw Docker runtime logs it as unknown.
 - `llm_output` requires `plugins.entries.openclaw-rp-plugin.hooks.allowConversationAccess=true`.
-- `/rp sync-agent-persona` exists but is not currently proven to write the active Docker agent's actual `SOUL.md`.
-- `/rp` command output still contains hardcoded Chinese text in `commandRouter.js`.
+- `/rp sync-agent-persona` remains legacy/manual character override mode, not the default architecture.
+- `/rp` command output was converted to English for core command-router responses.
 
 ## Target Runtime
 
@@ -44,7 +47,7 @@ Config priority rule:
 
 ### 1. RP-Owned Native Turn Claiming
 
-Status: implemented as `/rp init` MVP.
+Status: optional / unverified in Docker.
 
 Goal: while an RP session is active, the plugin should claim or short-circuit normal user turns and return the RP engine's response directly. The normal OpenClaw agent should not run for those turns.
 
@@ -77,7 +80,7 @@ Acceptance tests:
 
 ### 2. Host Agent Initialization
 
-Status: in progress.
+Status: implemented and live-verified.
 
 Goal: initialize the OpenClaw agent as an RP host/controller, not as the current card character.
 
@@ -175,7 +178,8 @@ Known observations:
 - `llm_output` is permission-gated by `hooks.allowConversationAccess=true`.
 - `reply_payload_sending` is unknown in the current target runtime and should stay disabled by default.
 - `message_sending` appears to be available, but should not be foundational for the core RP illusion.
-- `before_prompt_build` can inject context but is not enough as the primary architecture.
+- `before_prompt_build` is live-verified as the current working Docker bridge path.
+- `before_message_write` is live-verified blocking active RP writes to main OpenClaw history.
 
 Needed:
 
@@ -200,8 +204,16 @@ Implemented:
 - Normalizes plugin-owned generated text into short messages.
 - Adds lightweight premise and boundary guards.
 
+Known live issue:
+
+- The model still hallucinated an incorrect explicit time, saying it texted the user at 2 AM when the real/plugin runtime time was not 2 AM. The clock prompt exists, but current prompt-only enforcement is not strong enough.
+- For Sarah Miller clock debugging, remember the character timezone is `America/New_York`; compare explicit time claims against the plugin-computed New York local time, not the host/user local time.
+
 Follow-up:
 
+- Strengthen runtime-clock instructions so the character must not invent current or recent clock times.
+- Add output validation/repair for explicit time claims when they conflict with the plugin-computed clock.
+- Add a debug command such as `/rp texting-now` or `/rp state` that shows the exact runtime clock being injected.
 - Improve availability policy with emotional state, relationship temperature, unanswered proactive messages, and user event classification.
 - Keep card-domain details in the card extension, not runtime code.
 - Avoid heavy simulation systems or extra model calls unless live testing proves they are needed.
@@ -241,19 +253,47 @@ Follow-up:
 
 ### 9. Debug Commands
 
-Status: not started.
+Status: implemented as MVP.
 
-Candidate commands:
+Implemented:
 
 - `/rp state`
 - `/rp texting-state`
-- `/rp texting-debug`
-- `/rp texting-now`
 - `/rp hooks-status`
-- `/rp persona-status`
 - `/rp queue`
 
-### 10. Fake-Time Tests
+Current behavior:
+
+- `/rp state` and `/rp texting-state` show the active session, card/preset, turn counts, selected texting runtime state fields, companion schedule status, and pending delayed-message count.
+- `/rp queue` shows pending delayed messages for the active session. `-all` shows all pending delayed messages visible to the store; `-limit N` controls row count.
+- `/rp hooks-status` in native OpenClaw mode shows configured and registered hook status, including conversation access and optional hook flags.
+
+Follow-up:
+
+- Add `/rp texting-now` to print the exact plugin-computed runtime clock and character-local time.
+- Add `/rp persona-status` as an alias or richer output around `/rp init -status`.
+- Add redaction controls if debug output becomes too verbose or sensitive.
+
+### 10. Telegram Command QoL
+
+Status: implemented as parser/start MVP.
+
+Telegram can turn `--option` into a long dash, making double-dash commands awkward. Prefer documenting single-dash options such as `-card`, `-preset`, `-force`, and `-status`. The parser still accepts legacy `--option` and pasted smart-dash option prefixes.
+
+Implemented:
+
+- Parser accepts single-dash options.
+- Smart-dash option prefixes normalize to single-dash options.
+- `/rp start` without `-card` starts the last card imported in the same channel.
+- If the in-memory last-import hint is unavailable, `/rp start` falls back to the newest imported card for that user.
+- Card import responses include `Next: /rp start`.
+
+Follow-up:
+
+- Consider explicit stable aliases, for example `/rp alias Sarah` or `-alias sarah`, if multiple imported cards make newest-card defaults insufficient.
+- Consider `/rp start last` as a human-readable alias.
+
+### 11. Fake-Time Tests
 
 Status: not started.
 
@@ -267,26 +307,45 @@ Add deterministic tests for:
 - relative date calculation
 - due delayed reply dispatch
 
-### 11. Character Book V2 Support
+### 12. Character Book V2 Support
 
 Status: not started.
 
 Improve full Character Card V2/V3 support by importing `character_book` into lorebook or prompt context.
 
-### 12. Docker Smoke Test
+### 13. Card Iteration Tool
 
-Status: ongoing.
+Status: not started.
+
+Add a small tool/script to update an exported PNG character card with the current draft JSON for fast iteration.
+
+Needed:
+
+- Read card JSON from `card-makefiles/<name>.json`.
+- Embed it into an existing PNG card using the standard `ccv3` tEXt chunk.
+- Also optionally write legacy `chara` metadata for older plugin/container builds.
+- Preserve the PNG image data while replacing card metadata.
+- Provide a simple command documented in README, for example `npm run card:update -- SarahMiller`.
+
+### 14. Docker Smoke Test
+
+Status: partially live-verified.
 
 Verify in OpenClaw `v2026.5.27-beta.1` running in Linux Docker:
 
-- card import works
-- `/rp start` sends first card message
-- normal user reply during active RP is claimed by plugin-owned RP engine
+- card import works. Verified.
+- `/rp start` sends first card message. Verified.
+- `/rp init` writes correct agent `IDENTITY.md` and `SOUL.md`. Verified.
+- normal user reply during active RP is handled by the prompt-injection bridge. Verified.
+- active RP user and assistant turns persist in plugin SQLite. Verified through 13 turns.
+- main OpenClaw conversation writes are blocked during active RP. Verified by logs.
+- normal user reply during active RP is claimed by plugin-owned RP engine. Not yet verified; optional hook path remains unproven.
 - normal user reply does not produce a second base-agent response
 - `/rp pause` behavior is correct
 - `/rp end` releases the channel
 - Telegram fallback token `TELEGRAM_RP_BOT_TOKEN` works when native send API is unavailable
 - required hook permissions are documented and present in `openclaw.json`
+- runtime clock prevents false explicit time claims. Failed once live; needs stronger enforcement.
 
 ## Maintenance Rule
 

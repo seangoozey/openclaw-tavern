@@ -44,8 +44,8 @@ OpenClaw RP Plugin is a roleplay-focused OpenClaw plugin with first-class SillyT
 ### 4. Multimodal
 
 - `/rp speak`: TTS from latest assistant reply
-- `/rp image`: image generation from role context, supports `--prompt` / `--style`
-- `/rp video`: AI video generation from role context, supports `--prompt` / `--style` (Gemini Veo 3.1)
+- `/rp image`: image generation from role context, supports `-prompt` / `-style`
+- `/rp video`: AI video generation from role context, supports `-prompt` / `-style` (Gemini Veo 3.1)
 - `/rp agent-image`: inspect or switch native-agent image provider / model / enabled state
 - Optional agent tool: `rp_generate_image`, which lets the native OpenClaw agent generate and return images in normal non-`/rp` chats
 - Automatic media follow-ups in Telegram: image, voice, and video auto-generation when user intent is detected
@@ -95,7 +95,7 @@ Note: install entry names vary by gateway version (plugin manager button vs admi
 ### Step 2: Start Session
 
 ```text
-/rp start --card <card_name_or_id> --preset <preset_name_or_id> --lorebook <lorebook_name_or_id>
+/rp start -card <card_name_or_id> -preset <preset_name_or_id> -lorebook <lorebook_name_or_id>
 ```
 
 ### Step 3: Chat Normally
@@ -109,21 +109,25 @@ Note: install entry names vary by gateway version (plugin manager button vs admi
 
 - `/rp help`
 - `/rp import-card` / `/rp import-preset` / `/rp import-lorebook`
-- `/rp list-assets [--type card|preset|lorebook] [--search "..."] [--page N]`
+- `/rp list-assets [-type card|preset|lorebook] [-search "..."] [-page N]`
 - `/rp show-asset <name_or_id>`
-- `/rp delete-asset <id> --confirm`
-- `/rp start --card ... [--preset ...] [--lorebook ...]`
+- `/rp delete-asset <id> -confirm`
+- `/rp start [-card ...] [-preset ...] [-lorebook ...]`
+- `/rp start` - starts the most recently imported card in the current channel
 - `/rp session`
-- `/rp retry [--edit "..."]`
+- `/rp retry [-edit "..."]`
 - `/rp speak`
-- `/rp image [--prompt "..."] [--style "..."]`
-- `/rp video [--prompt "..."] [--style "..."]`
-- `/rp agent-image [--provider inherit|openai|gemini] [--model "..."] [--clear-model] [--enable|--disable]`
-- `/rp companion-nudge [--reason "..."] [--idle-minutes N] [--mode balanced|checkin|question|report] [--force]`
-- `/rp companion-auto [--enable|--disable] [--min-hours N] [--max-per-day N] [--quiet-hours HH:MM-HH:MM] [--idle-minutes N] [--mode balanced|checkin|question|report]`
+- `/rp image [-prompt "..."] [-style "..."]`
+- `/rp video [-prompt "..."] [-style "..."]`
+- `/rp agent-image [-provider inherit|openai|gemini] [-model "..."] [-clear-model] [-enable|-disable]`
+- `/rp companion-nudge [-reason "..."] [-idle-minutes N] [-mode balanced|checkin|question|report] [-force]`
+- `/rp companion-auto [-enable|-disable] [-min-hours N] [-max-per-day N] [-quiet-hours HH:MM-HH:MM] [-idle-minutes N] [-mode balanced|checkin|question|report]`
+- `/rp state` - show active session, texting runtime state, companion schedule, and delayed-message count
+- `/rp queue [-all] [-limit N]` - show pending delayed RP messages
+- `/rp hooks-status` - show native OpenClaw hook config/registration status
 - `/rp init` - initialize the OpenClaw agent as the RP host/controller by writing managed blocks to `IDENTITY.md` and `SOUL.md`
-- `/rp init --status` - show resolved host persona file paths and managed block status
-- `/rp init --restore` - remove only the managed host persona blocks
+- `/rp init -status` - show resolved host persona file paths and managed block status
+- `/rp init -restore` - remove only the managed host persona blocks
 - `/rp sync-agent-persona` - legacy/manual mode: write current RP character into the agent's `SOUL.md`
 - `/rp restore-agent-persona` - remove legacy RP character preset from `SOUL.md`, restore original persona
 - `/rp pause` / `/rp resume` / `/rp end`
@@ -132,16 +136,16 @@ Note: install entry names vary by gateway version (plugin manager button vs admi
 
 ```text
 # Trigger proactive companion output now (message + question + action report)
-/rp companion-nudge --force --reason "evening emotional check-in" --mode balanced
+/rp companion-nudge -force -reason "evening emotional check-in" -mode balanced
 
 # Trigger only when user has been idle for 3 hours
-/rp companion-nudge --idle-minutes 180 --mode checkin
+/rp companion-nudge -idle-minutes 180 -mode checkin
 
 # Enable conservative autonomous Telegram outreach for the active RP session
-/rp companion-auto --enable --min-hours 6 --max-per-day 2 --quiet-hours 22:00-08:00 --idle-minutes 180 --mode checkin
+/rp companion-auto -enable -min-hours 6 -max-per-day 2 -quiet-hours 22:00-08:00 -idle-minutes 180 -mode checkin
 
 # Disable autonomous outreach for the active RP session
-/rp companion-auto --disable
+/rp companion-auto -disable
 ```
 
 `companion-auto` is opt-in per Telegram RP session. It only sends while the
@@ -243,11 +247,11 @@ You can also switch it directly in native OpenClaw mode:
 
 ```bash
 /rp agent-image
-/rp agent-image --provider openai --model grok-imagine-1.0
-/rp agent-image --provider gemini --model gemini-3.1-flash-image-preview
-/rp agent-image --clear-model
-/rp agent-image --disable
-/rp agent-image --enable
+/rp agent-image -provider openai -model grok-imagine-1.0
+/rp agent-image -provider gemini -model gemini-3.1-flash-image-preview
+/rp agent-image -clear-model
+/rp agent-image -disable
+/rp agent-image -enable
 ```
 
 This command updates `plugins.entries.openclaw-rp-plugin.config.agentImage` and refreshes the live in-process agent image config immediately, without restarting the gateway.

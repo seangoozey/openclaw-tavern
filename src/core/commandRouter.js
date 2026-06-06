@@ -155,26 +155,30 @@ function helpText() {
     "RP commands:",
     "",
     "Import",
-    "  /rp import-card + attachment (or --url/--file)",
-    "  /rp import-preset + attachment (or --url/--file)",
-    "  /rp import-lorebook + attachment (or --url/--file)",
+    "  /rp import-card + attachment (or -url/-file)",
+    "  /rp import-preset + attachment (or -url/-file)",
+    "  /rp import-lorebook + attachment (or -url/-file)",
     "  Tip: send a file first, then run /rp import-* if your channel supports attachment fallback.",
     "",
     "Asset management",
-    "  /rp list-assets [--type card|preset|lorebook] [--search \"...\"] [--page N]",
+    "  /rp list-assets [-type card|preset|lorebook] [-search \"...\"] [-page N]",
     "  /rp show-asset <name_or_id>",
-    "  /rp delete-asset <ID> --confirm",
+    "  /rp delete-asset <ID> -confirm",
     "",
     "Session control",
-    "  /rp start --card <name_or_id> [--preset <name_or_id>] [--lorebook <name_or_id> ...]",
+    "  /rp start [-card <name_or_id>] [-preset <name_or_id>] [-lorebook <name_or_id> ...]",
+    "                  Without -card, starts the newest imported card.",
     "  /rp session     Show the current session",
-    "  /rp retry [--edit \"...\"]  Regenerate the last reply",
+    "  /rp retry [-edit \"...\"]  Regenerate the last reply",
     "  /rp speak        Generate TTS for the latest assistant reply",
-    "  /rp image [--prompt \"...\"] [--style \"...\"]",
-    "  /rp video [--prompt \"...\"] [--style \"...\"]",
-    "  /rp agent-image [--provider inherit|openai|gemini] [--model \"...\"] [--clear-model] [--enable|--disable]",
-    "  /rp companion-nudge [--reason \"...\"] [--idle-minutes N] [--mode balanced|checkin|question|report] [--force]",
-    "  /rp companion-auto [--enable|--disable] [--min-hours N] [--max-per-day N] [--quiet-hours HH:MM-HH:MM]",
+    "  /rp image [-prompt \"...\"] [-style \"...\"]",
+    "  /rp video [-prompt \"...\"] [-style \"...\"]",
+    "  /rp agent-image [-provider inherit|openai|gemini] [-model \"...\"] [-clear-model] [-enable|-disable]",
+    "  /rp companion-nudge [-reason \"...\"] [-idle-minutes N] [-mode balanced|checkin|question|report] [-force]",
+    "  /rp companion-auto [-enable|-disable] [-min-hours N] [-max-per-day N] [-quiet-hours HH:MM-HH:MM]",
+    "  /rp state        Show active RP session/debug state",
+    "  /rp queue        Show pending delayed RP messages",
+    "  /rp hooks-status Show native OpenClaw hook config/status when available",
     "  /rp pause / resume / end",
   ].join("\n");
 }
@@ -504,6 +508,7 @@ export class CommandRouter {
     this.rateLimiter = rateLimiter || new InMemoryRateLimiter({ windowMs: 5000 });
     this.getAgentImageConfig = getAgentImageConfig;
     this.updateAgentImageConfig = updateAgentImageConfig;
+    this.lastImportedCardByContext = new Map();
   }
 
   async handleMessage(ctx) {
@@ -579,6 +584,15 @@ export class CommandRouter {
         return this.companionNudge(nctx, options);
       case "companion-auto":
         return this.companionAuto(nctx, options);
+      case "state":
+      case "texting-state":
+        return this.debugState(nctx);
+      case "queue":
+        return this.debugQueue(nctx, options);
+      case "hooks-status":
+        return ok("Hook status is only available in native OpenClaw mode", {
+          text: "Hook status is only available in native OpenClaw mode.",
+        });
       default:
         throw new RPError(RP_ERROR_CODES.BAD_REQUEST, `Unknown command: ${command}`);
     }
@@ -740,6 +754,10 @@ export class CommandRouter {
     if (allWarnings.length > 0) {
       lines.push(`Warning: ${allWarnings.join("; ")}`);
     }
+    if (type === RP_ASSET_TYPES.CARD) {
+      this.lastImportedCardByContext.set(buildChannelSessionKey(ctx), asset.id);
+      lines.push("Next: /rp start");
+    }
 
     return ok(lines.join("\n"), {
       asset_id: asset.id,
@@ -832,7 +850,7 @@ export class CommandRouter {
     if (!options?.confirm) {
       throw new RPError(
         RP_ERROR_CODES.BAD_REQUEST,
-        "Deletion requires confirmation: /rp delete-asset <id> --confirm",
+        "Deletion requires confirmation: /rp delete-asset <id> -confirm",
       );
     }
     const deleted = this.store.deleteAsset({ userId: ctx.userId, assetId: String(assetId) });
@@ -845,13 +863,13 @@ export class CommandRouter {
   startSession(ctx, options) {
     const cardRef = options?.card;
     const presetRef = options?.preset;
-    requireArg(cardRef, "Usage: /rp start --card <name_or_id> [--preset <name_or_id>] [--lorebook <name_or_id> ...]");
-
-    const card = this.store.resolveAssetByNameOrId({
-      userId: ctx.userId,
-      type: RP_ASSET_TYPES.CARD,
-      nameOrId: String(cardRef),
-    });
+    const card = cardRef
+      ? this.store.resolveAssetByNameOrId({
+          userId: ctx.userId,
+          type: RP_ASSET_TYPES.CARD,
+          nameOrId: String(cardRef),
+        })
+      : this.resolveDefaultStartCard(ctx);
 
     // Preset: use specified, or resolve "Default", or create built-in default
     let preset;
@@ -969,6 +987,115 @@ export class CommandRouter {
       status: bundle.session.status,
       summary_version: bundle.session.summary_version,
       created_at: bundle.session.created_at,
+    });
+  }
+
+  debugState(ctx) {
+    const session = this.store.getSessionByChannelKey(buildChannelSessionKey(ctx));
+    if (!session || session.user_id !== ctx.userId) {
+      throw new RPError(RP_ERROR_CODES.SESSION_NOT_FOUND, "No session in this channel");
+    }
+
+    const bundle = this.store.getSessionAssetBundle(session.id);
+    const stateRow = typeof this.store.getSessionState === "function"
+      ? this.store.getSessionState(session.id)
+      : null;
+    const state = parseStateJson(stateRow?.state_json);
+    const schedule = typeof this.store.getCompanionSchedule === "function"
+      ? this.store.getCompanionSchedule(session.id)
+      : null;
+    const delayed = typeof this.store.listPendingDelayedMessages === "function"
+      ? this.store.listPendingDelayedMessages({ sessionId: session.id, limit: 5 })
+      : [];
+
+    const lines = [
+      "RP debug state",
+      `- session: ${session.id}`,
+      `- status: ${session.status}`,
+      `- character: ${bundle.card?.name || "(unknown)"}`,
+      `- preset: ${bundle.preset?.name || "(unknown)"}`,
+      `- turns: ${session.turn_count}`,
+      `- summary version: ${session.summary_version}`,
+      `- channel: ${session.channel_type}`,
+      `- state row: ${stateRow ? "yes" : "no"}`,
+    ];
+
+    if (stateRow) {
+      lines.push(`- state updated: ${stateRow.updated_at || "(unknown)"}`);
+      for (const key of [
+        "timezone",
+        "current_location",
+        "current_activity",
+        "attention_level",
+        "emotional_state",
+        "relationship_temperature",
+        "current_schedule_event",
+        "last_interaction_type",
+        "last_interaction_at",
+      ]) {
+        if (state[key] !== undefined && state[key] !== null && state[key] !== "") {
+          lines.push(`- ${key}: ${clipDebugValue(state[key])}`);
+        }
+      }
+    }
+
+    if (schedule) {
+      lines.push(`- companion auto: ${schedule.enabled ? "enabled" : "disabled"}`);
+      lines.push(`- companion next eligible: ${schedule.next_eligible_at || "(unset)"}`);
+    } else {
+      lines.push("- companion auto: not configured");
+    }
+    lines.push(`- pending delayed messages: ${delayed.length}`);
+
+    return ok("RP debug state", {
+      text: lines.join("\n"),
+      session_id: session.id,
+      status: session.status,
+      state,
+      state_row: stateRow,
+      pending_delayed_messages: delayed,
+      companion_schedule: schedule,
+    });
+  }
+
+  debugQueue(ctx, options = {}) {
+    const session = this.store.getSessionByChannelKey(buildChannelSessionKey(ctx));
+    const all = Boolean(options.all);
+    if (!all && (!session || session.user_id !== ctx.userId)) {
+      throw new RPError(RP_ERROR_CODES.SESSION_NOT_FOUND, "No session in this channel");
+    }
+    if (typeof this.store.listPendingDelayedMessages !== "function") {
+      throw new RPError(RP_ERROR_CODES.INTERNAL_ERROR, "Delayed queue inspection is unavailable for this store");
+    }
+
+    const limit = parsePositiveInteger(options.limit, 10, "-limit");
+    const messages = this.store.listPendingDelayedMessages({
+      sessionId: all ? undefined : session.id,
+      limit,
+    });
+    const lines = [
+      all ? "Pending RP delayed messages" : `Pending RP delayed messages for ${session.id}`,
+    ];
+    if (messages.length === 0) {
+      lines.push("- none");
+    } else {
+      for (const message of messages) {
+        const payload = parseStateJson(message.payload_json);
+        lines.push(`- ${message.id}: due ${message.due_at || "(unset)"} reason=${message.reason || "(none)"}`);
+        if (payload.kind) {
+          lines.push(`  kind: ${payload.kind}`);
+        }
+        if (message.failure_count) {
+          lines.push(`  failures: ${message.failure_count} ${message.last_error ? `last_error=${clipDebugValue(message.last_error, 120)}` : ""}`.trimEnd());
+        }
+      }
+    }
+
+    return ok("RP delayed queue", {
+      text: lines.join("\n"),
+      session_id: session?.id,
+      all,
+      messages,
     });
   }
 
@@ -1342,6 +1469,37 @@ export class CommandRouter {
     });
   }
 
+  resolveLatestAsset(ctx, type, missingMessage) {
+    const result = this.store.listAssets({
+      userId: ctx.userId,
+      type,
+      page: 1,
+      pageSize: 1,
+    });
+    const asset = result.items?.[0];
+    if (!asset) {
+      throw new RPError(RP_ERROR_CODES.BAD_REQUEST, missingMessage || `No ${type} assets found`);
+    }
+    return asset;
+  }
+
+  resolveDefaultStartCard(ctx) {
+    const contextKey = buildChannelSessionKey(ctx);
+    const rememberedId = this.lastImportedCardByContext.get(contextKey);
+    if (rememberedId) {
+      try {
+        return this.store.resolveAssetByNameOrId({
+          userId: ctx.userId,
+          type: RP_ASSET_TYPES.CARD,
+          nameOrId: rememberedId,
+        });
+      } catch {
+        this.lastImportedCardByContext.delete(contextKey);
+      }
+    }
+    return this.resolveLatestAsset(ctx, RP_ASSET_TYPES.CARD, "Usage: /rp start [-card <name_or_id>]");
+  }
+
   companionAuto(ctx, options = {}) {
     if (ctx.channelType !== "telegram") {
       throw new RPError(RP_ERROR_CODES.BAD_REQUEST, "Automatic companion outreach is only supported for Telegram sessions");
@@ -1421,4 +1579,21 @@ export class CommandRouter {
       schedule,
     });
   }
+}
+
+function parseStateJson(raw) {
+  try {
+    const parsed = JSON.parse(raw || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function clipDebugValue(value, max = 80) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!text) {
+    return "";
+  }
+  return text.length <= max ? text : `${text.slice(0, max - 1)}...`;
 }

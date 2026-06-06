@@ -14,6 +14,14 @@ test("parse repeated options", () => {
   assert.deepEqual(parsed.options.lorebook, ["a", "b"]);
 });
 
+test("parse single dash options", () => {
+  const parsed = parseRpCommand('/rp start -card Sarah -preset Default -lorebook "town lore"');
+  assert.equal(parsed.command, "start");
+  assert.equal(parsed.options.card, "Sarah");
+  assert.equal(parsed.options.preset, "Default");
+  assert.equal(parsed.options.lorebook, "town lore");
+});
+
 test("parse quoted Windows paths without treating path separators as escapes", () => {
   const parsed = parseRpCommand('/rp import-card --file "C:\\tmp\\card.json"');
   assert.equal(parsed.options.file, "C:\\tmp\\card.json");

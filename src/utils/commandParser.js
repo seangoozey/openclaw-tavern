@@ -48,7 +48,17 @@ function tokenize(raw) {
 }
 
 function normalizeOptionDashes(content) {
-  return String(content || "").replace(/(^|\s)[\u2012\u2013\u2014\u2015](?=[A-Za-z][\w-]*(?:\s|$))/g, "$1--");
+  return String(content || "").replace(/(^|\s)[\u2012\u2013\u2014\u2015](?=[A-Za-z][\w-]*(?:\s|$))/g, "$1-");
+}
+
+function parseOptionToken(token) {
+  if (token.startsWith("--")) {
+    return token.slice(2);
+  }
+  if (/^-[A-Za-z][\w-]*$/.test(token)) {
+    return token.slice(1);
+  }
+  return null;
 }
 
 export function parseRpCommand(content) {
@@ -67,13 +77,13 @@ export function parseRpCommand(content) {
 
   for (let i = 2; i < tokens.length; i += 1) {
     const token = tokens[i];
-    if (token.startsWith("--")) {
-      const key = token.slice(2);
+    const key = parseOptionToken(token);
+    if (key !== null) {
       if (!key) {
         throw new RPError(RP_ERROR_CODES.BAD_REQUEST, "Invalid option name");
       }
       const next = tokens[i + 1];
-      if (!next || next.startsWith("--")) {
+      if (!next || parseOptionToken(next) !== null) {
         options[key] = true;
         continue;
       }

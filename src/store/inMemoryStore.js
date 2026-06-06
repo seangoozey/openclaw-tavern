@@ -559,6 +559,15 @@ export class InMemoryStore {
       .map(clone);
   }
 
+  listPendingDelayedMessages({ sessionId, limit = 20 } = {}) {
+    return [...this.delayedMessages.values()]
+      .filter((row) => row.status === "pending")
+      .filter((row) => (sessionId ? row.session_id === sessionId : true))
+      .sort((a, b) => String(a.due_at || "").localeCompare(String(b.due_at || "")))
+      .slice(0, Number(limit) || 20)
+      .map(clone);
+  }
+
   markDelayedMessageSent({ id, sentAt }) {
     const row = this.delayedMessages.get(id);
     if (!row) return null;

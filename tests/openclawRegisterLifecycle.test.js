@@ -163,6 +163,52 @@ test("reply_payload_sending hook registers when native hook config opts in", asy
   }
 });
 
+test("/rp hooks-status reports configured and registered native hooks", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const commands = new Map();
+  const services = new Map();
+  const hooks = new Map();
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        services,
+        hooks,
+        config: {
+          plugins: {
+            entries: {
+              "openclaw-rp-plugin": {
+                hooks: {
+                  allowConversationAccess: true,
+                },
+                config: {
+                  nativeHooks: {
+                    inboundClaim: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const rp = commands.get("rp");
+    assert.ok(rp);
+    const result = await rp.handler({ commandBody: "/rp hooks-status" });
+    assert.equal(result.isError, undefined);
+    assert.match(result.text, /OpenClaw RP hook status/);
+    assert.match(result.text, /inbound_claim: configured=yes registered=yes/);
+    assert.match(result.text, /llm_output: configured=yes registered=yes/);
+    assert.match(result.text, /reply_payload_sending: configured=no registered=no/);
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("/rp init manages host IDENTITY.md and SOUL.md blocks", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-workspace-"));

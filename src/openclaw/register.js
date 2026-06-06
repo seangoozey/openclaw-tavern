@@ -2594,6 +2594,7 @@ export default {
     const activeRpContextByChannel = new Map();
     const pendingOutboundTextingRewrites = new Map();
     const ownedNativeTurnCache = new Map();
+    const registeredNativeHooks = new Set();
     const rpContextTtlMs = 120000;
     const outboundRewriteTtlMs = 120000;
     const ownedNativeTurnTtlMs = 120000;
@@ -2608,6 +2609,80 @@ export default {
         normalizeAllowedAgentIds(getOpenClawRpPluginConfig(api?.config)),
         ...sources,
       );
+    }
+
+    function onNativeHook(name, handler) {
+      api.on(name, handler);
+      registeredNativeHooks.add(name);
+    }
+
+    function registerOptionalNativeHook(name, handler) {
+      const registered = registerOptionalHook(api, name, handler);
+      if (registered) {
+        registeredNativeHooks.add(name);
+      }
+      return registered;
+    }
+
+    function buildHooksStatusResponse() {
+      const nativeHooks = {
+        inbound_claim: {
+          configured: isNativeHookEnabled(api, "inboundClaim"),
+          registered: registeredNativeHooks.has("inbound_claim"),
+        },
+        before_agent_reply: {
+          configured: isNativeHookEnabled(api, "beforeAgentReply"),
+          registered: registeredNativeHooks.has("before_agent_reply"),
+        },
+        before_agent_run: {
+          configured: isNativeHookEnabled(api, "beforeAgentRun"),
+          registered: registeredNativeHooks.has("before_agent_run"),
+        },
+        reply_payload_sending: {
+          configured: isReplyPayloadSendingHookEnabled(api),
+          registered: registeredNativeHooks.has("reply_payload_sending"),
+        },
+        llm_output: {
+          configured: hasConversationHookAccess(api),
+          registered: registeredNativeHooks.has("llm_output"),
+        },
+        message_received: {
+          configured: true,
+          registered: registeredNativeHooks.has("message_received"),
+        },
+        before_prompt_build: {
+          configured: true,
+          registered: registeredNativeHooks.has("before_prompt_build"),
+        },
+        before_message_write: {
+          configured: true,
+          registered: registeredNativeHooks.has("before_message_write"),
+        },
+        message_sending: {
+          configured: true,
+          registered: registeredNativeHooks.has("message_sending"),
+        },
+        message_sent: {
+          configured: true,
+          registered: registeredNativeHooks.has("message_sent"),
+        },
+      };
+      const lines = [
+        "OpenClaw RP hook status",
+        `- conversation access: ${hasConversationHookAccess(api) ? "enabled" : "disabled"}`,
+      ];
+      for (const [name, status] of Object.entries(nativeHooks)) {
+        lines.push(`- ${name}: configured=${status.configured ? "yes" : "no"} registered=${status.registered ? "yes" : "no"}`);
+      }
+      return {
+        ok: true,
+        message: "OpenClaw RP hook status",
+        data: {
+          text: lines.join("\n"),
+          native_hooks: nativeHooks,
+          conversation_access: hasConversationHookAccess(api),
+        },
+      };
     }
 
     function getCurrentAgentImageConfig() {
@@ -2869,6 +2944,13 @@ export default {
             };
           }
 
+          if (parsedCommand?.command === "hooks-status") {
+            const response = buildHooksStatusResponse();
+            return {
+              text: formatResponseText(response),
+            };
+          }
+
           if (parsedCommand?.command === "sync-agent-persona") {
             const response = await handleSyncAgentPersonaCommand({
               store,
@@ -2945,7 +3027,7 @@ export default {
     });
 
     if (isNativeHookEnabled(api, "inboundClaim")) {
-      registerOptionalHook(api, "inbound_claim", async (event, ctx) => {
+      registerOptionalNativeHook("inbound_claim", async (event, ctx) => {
         try {
           return await handleOwnedNativeRpTurn("inbound_claim", event, ctx);
         } catch (err) {
@@ -2957,7 +3039,7 @@ export default {
     }
 
     if (isNativeHookEnabled(api, "beforeAgentReply")) {
-      registerOptionalHook(api, "before_agent_reply", async (event, ctx) => {
+      registerOptionalNativeHook("before_agent_reply", async (event, ctx) => {
         try {
           return await handleOwnedNativeRpTurn("before_agent_reply", event, ctx);
         } catch (err) {
@@ -2969,7 +3051,7 @@ export default {
     }
 
     if (isNativeHookEnabled(api, "beforeAgentRun")) {
-      registerOptionalHook(api, "before_agent_run", async (event, ctx) => {
+      registerOptionalNativeHook("before_agent_run", async (event, ctx) => {
         try {
           return await handleOwnedNativeRpTurn("before_agent_run", event, ctx);
         } catch (err) {
@@ -2980,7 +3062,7 @@ export default {
       });
     }
 
-    api.on("message_received", async (event, hookCtx) => {
+    onNativeHook("message_received", async (event, hookCtx) => {
       try {
         if (!isRpAgentAllowed(event, hookCtx)) {
           return;
@@ -3102,7 +3184,7 @@ export default {
     });
 
     // Inject RP character prompt when an active RP session exists
-    api.on("before_prompt_build", async (event, ctx) => {
+    onNativeHook("before_prompt_build", async (event, ctx) => {
       try {
         if (!isRpAgentAllowed(event, ctx)) {
           return;
@@ -3251,7 +3333,7 @@ export default {
 
     // Capture LLM output and append as assistant turn in the RP session.
     if (hasConversationHookAccess(api)) {
-      registerOptionalHook(api, "llm_output", async (event, ctx) => {
+      registerOptionalNativeHook("llm_output", async (event, ctx) => {
         try {
           if (!isRpAgentAllowed(event, ctx)) {
             return;
@@ -3371,7 +3453,7 @@ export default {
       );
     }
 
-    registerOptionalHook(api, "message_sending", async (event, ctx) => {
+    registerOptionalNativeHook("message_sending", async (event, ctx) => {
       try {
         if (!isRpAgentAllowed(event, ctx)) {
           return;
@@ -3412,7 +3494,7 @@ export default {
     });
 
     if (isReplyPayloadSendingHookEnabled(api)) {
-      registerOptionalHook(api, "reply_payload_sending", async (event, ctx) => {
+      registerOptionalNativeHook("reply_payload_sending", async (event, ctx) => {
         try {
           if (!isRpAgentAllowed(event, ctx)) {
             return;
@@ -3453,7 +3535,7 @@ export default {
       });
     }
 
-    registerOptionalHook(api, "message_sent", async (event, ctx) => {
+    registerOptionalNativeHook("message_sent", async (event, ctx) => {
       try {
         if (!isRpAgentAllowed(event, ctx)) {
           return;
@@ -3471,7 +3553,7 @@ export default {
     // conversation during an active RP session.  This keeps the main context
     // completely clean — RP turns are only stored in the plugin's own SQLite.
     // Note: before_message_write MUST be synchronous (no async/await).
-    api.on("before_message_write", (event, ctx) => {
+    onNativeHook("before_message_write", (event, ctx) => {
       try {
         if (!isRpAgentAllowed(event, ctx)) return;
         if (!store || !router) return;

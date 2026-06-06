@@ -2,7 +2,11 @@
 
 ## Project Purpose
 
-This repository is an OpenClaw roleplay plugin. Its purpose is to let an OpenClaw agent run SillyTavern-style character sessions while keeping RP state, memory, card data, and media tooling inside the plugin instead of polluting the main OpenClaw conversation history.
+This repository is an OpenClaw RP host/controller plugin. Its purpose is to let an OpenClaw agent host persistent character sessions while keeping the agent's stable identity separate from imported RP characters.
+
+The OpenClaw agent should be initialized as a host/controller with `/rp init`. Imported character cards live in plugin-managed sessions, not in the agent's permanent identity. During an active RP session, the plugin owns card identity, prompt construction, runtime state, memory, schedule context, media tooling, and persistence. Native OpenClaw hooks inject RP context into active turns, block those turns from polluting the main OpenClaw conversation history, and capture assistant output back into plugin storage.
+
+SillyTavern-style Character Card V2/V3 compatibility remains important, but card import is an input path rather than the whole architecture. The agent is the host; the plugin/session is the character runtime.
 
 The current direction is broader than ordinary turn-based roleplay. The target experience is a persistent real-time texting simulator: a character should feel like a person with a life, schedule, limited attention, moods, privacy habits, memory, and proactive outreach. The character is not waiting in a blank void for the user.
 
@@ -23,6 +27,7 @@ Practical implications:
 - Supports Character Card Spec V2 and V3 import for common fields.
 - Stores sessions, turns, summaries, long-memory embeddings, and companion schedules.
 - Provides `/rp` commands through OpenClaw.
+- Initializes the agent as an RP host/controller with `/rp init`, writing managed blocks to `IDENTITY.md` and `SOUL.md`.
 - Supports proactive companion nudges and Telegram auto outreach.
 - Supports TTS, image, video, and native OpenClaw agent-image helpers.
 - Has a texting-persona extension path for V2/V3 cards via `data.extensions["openclaw/texting_persona"]`.

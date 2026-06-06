@@ -869,6 +869,25 @@ export class SqliteStore {
       .map(clone);
   }
 
+  listPendingDelayedMessages({ sessionId, limit = 20 } = {}) {
+    const where = ["status = 'pending'"];
+    const args = [];
+    if (sessionId) {
+      where.push("session_id = ?");
+      args.push(sessionId);
+    }
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM rp_delayed_messages
+         WHERE ${where.join(" AND ")}
+         ORDER BY due_at ASC
+         LIMIT ?`,
+      )
+      .all(...args, Number(limit) || 20)
+      .map(clone);
+  }
+
   markDelayedMessageSent({ id, sentAt }) {
     this.db
       .prepare(
