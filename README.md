@@ -207,6 +207,9 @@ Add plugin config under your OpenClaw config:
             "inboundClaim": false,
             "beforeAgentReply": false,
             "beforeAgentRun": false
+          },
+          "agentHarness": {
+            "diagnostics": false
           }
         }
       }
@@ -223,6 +226,7 @@ Add plugin config under your OpenClaw config:
 - `hooks.allowConversationAccess`: required by OpenClaw for non-bundled plugins that register conversation hooks such as `llm_output`. Without it, native assistant turns and native auto-media follow-ups cannot be persisted by the plugin.
 - `nativeHooks.replyPayloadSending`: opt-in for OpenClaw builds that expose `reply_payload_sending`. Keep it `false` on `v2026.5.27-beta.1` if the container logs `unknown typed hook "reply_payload_sending"`.
 - `nativeHooks.inboundClaim`, `nativeHooks.beforeAgentReply`, `nativeHooks.beforeAgentRun`: opt-in candidates for plugin-owned RP turns. Enable one at a time in Docker to identify which hook exists in your OpenClaw build. When a supported hook fires during an active RP session, the plugin generates the RP reply directly and asks OpenClaw to block the normal agent run.
+- `agentHarness.diagnostics`: opt-in non-claiming harness probe. When `true`, the plugin logs sanitized `agent_harness.supports` context so you can inspect whether OpenClaw exposes the current agent/provider/model at harness-selection time.
 
 To let an OpenClaw agent use it, also allow `rp_generate_image` in the agent tool config. On OpenClaw `2026.3.x`, the recommended config is:
 

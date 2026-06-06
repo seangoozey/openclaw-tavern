@@ -102,6 +102,16 @@
             "default": false
           }
         }
+      },
+      "agentHarness": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "diagnostics": {
+            "type": "boolean",
+            "default": false
+          }
+        }
       }
     }
   }
