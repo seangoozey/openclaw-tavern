@@ -37,6 +37,38 @@ test("texting persona normalizer strips dynamic character labels", () => {
   assert.ok(normalized.length <= 220);
 });
 
+test("texting persona normalizer removes wrapped quotes and echoed user text", () => {
+  const normalized = normalizeTextingPersonaOutput(
+    [
+      '"Sarah Miller: are you still up?',
+      "You: i had a weird day and just wanted to hear from you",
+      "Sarah Miller: sorry, my brain is kind of lagging but yeah, I'm here",
+      'Sarah Miller: tell me the non-doomed version"',
+    ].join("\n"),
+    {
+      message_style: {
+        output_limits: {
+          max_messages: 4,
+          max_total_chars: 260,
+          max_chars_per_message: 120,
+        },
+      },
+    },
+    {
+      charName: "Sarah Miller",
+      userText: "i had a weird day and just wanted to hear from you",
+    },
+  );
+
+  assert.equal(normalized.includes("Sarah Miller:"), false);
+  assert.equal(normalized.includes("You:"), false);
+  assert.equal(normalized.includes("i had a weird day"), false);
+  assert.equal(normalized.startsWith('"'), false);
+  assert.equal(normalized.endsWith('"'), false);
+  assert.match(normalized, /are you still up\?/);
+  assert.match(normalized, /I'm here/);
+});
+
 test("texting persona schedule applies card-defined non-school state", () => {
   const store = new InMemoryStore();
   const card = store.createAsset({
@@ -216,6 +248,29 @@ test("texting persona boundary guard removes premise-breaking location and meeti
   );
 
   assert.equal(normalized, "but also i do want to keep texting");
+});
+
+test("texting persona boundary guard removes base assistant identity breaks", () => {
+  const normalized = normalizeTextingPersonaOutput(
+    "I'm an AI, so I don't have an age or any concept of age in the way humans do.",
+    {
+      proactive_texting: {
+        fallback_messages: {
+          identity_break: ["sorry, ignore that. my brain shorted out for a second"],
+        },
+      },
+      message_style: {
+        output_limits: {
+          max_messages: 2,
+          max_total_chars: 200,
+          max_chars_per_message: 120,
+        },
+      },
+    },
+    { charName: "Sarah Miller" },
+  );
+
+  assert.equal(normalized, "sorry, ignore that. my brain shorted out for a second");
 });
 
 test("texting persona boundary guard stays inactive without card boundaries", () => {

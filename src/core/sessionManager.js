@@ -269,7 +269,10 @@ export class SessionManager {
 
       const charName = prepared.bundle.card?.detail?.name || prepared.bundle.card?.name || "Character";
       const assistantText = prepared.textingPersona
-        ? normalizeTextingPersonaOutput(modelResponse?.content, prepared.textingPersona.config, { charName })
+        ? normalizeTextingPersonaOutput(modelResponse?.content, prepared.textingPersona.config, {
+            charName,
+            userText: content,
+          })
         : modelResponse?.content;
       if (!assistantText) {
         throw new RPError(RP_ERROR_CODES.MODEL_UNAVAILABLE, "Model returned empty content");
@@ -355,7 +358,10 @@ export class SessionManager {
 
       const charName = prepared.bundle.card?.detail?.name || prepared.bundle.card?.name || "Character";
       const assistantText = prepared.textingPersona
-        ? normalizeTextingPersonaOutput(modelResponse?.content, prepared.textingPersona.config, { charName })
+        ? normalizeTextingPersonaOutput(modelResponse?.content, prepared.textingPersona.config, {
+            charName,
+            userText: latestUserTurn?.content || "",
+          })
         : modelResponse?.content;
       if (!assistantText) {
         throw new RPError(RP_ERROR_CODES.MODEL_UNAVAILABLE, "Model returned empty content");
@@ -583,6 +589,7 @@ export class SessionManager {
       );
       text = normalizeTextingPersonaOutput(modelResponse?.content || "", prepared.textingPersona.config, {
         charName,
+        userText: payload.query_text || "",
       });
     }
     if (!text) {

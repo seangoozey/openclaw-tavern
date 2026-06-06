@@ -208,11 +208,16 @@ Known live issue:
 
 - The model still hallucinated an incorrect explicit time, saying it texted the user at 2 AM when the real/plugin runtime time was not 2 AM. The clock prompt exists, but current prompt-only enforcement is not strong enough.
 - For Sarah Miller clock debugging, remember the character timezone is `America/New_York`; compare explicit time claims against the plugin-computed New York local time, not the host/user local time.
+- Live output format has been inconsistent: one response prefixed every line with `Sarah Miller:`, one wrapped the entire response in quotes, and one echoed the user's previous reply into the assistant output.
+- Live identity break observed after `/new` + `/rp start`: the model replied with a base-assistant disclaimer, `I'm an AI, so I don't have an age...`. Logs showed `before_prompt_build` injected the RP prompt and `llm_output` captured the bad text, so this is a model/base-agent identity leak rather than a missing hook.
+- Some direct self-contradictions and vague/airheaded AI behavior remain model-quality issues. The plugin can reduce prompt pressure and sanitize format errors, but it cannot deterministically prevent every semantic contradiction without heavier validation or extra model calls.
 
 Follow-up:
 
 - Strengthen runtime-clock instructions so the character must not invent current or recent clock times.
 - Add output validation/repair for explicit time claims when they conflict with the plugin-computed clock.
+- Continue strengthening plugin-side output normalization for deterministic format failures: character labels, assistant/user labels, whole-response quotes, echoed user text, markdown/narration leakage, and overlong text dumps.
+- Treat base-assistant identity disclaimers (`I'm an AI`, `language model`, no age/body/feelings/real life) as premise breaks in texting-persona output and replace them with a card-authored `fallback_messages.identity_break` when available.
 - Add a debug command such as `/rp texting-now` or `/rp state` that shows the exact runtime clock being injected.
 - Improve availability policy with emotional state, relationship temperature, unanswered proactive messages, and user event classification.
 - Keep card-domain details in the card extension, not runtime code.
@@ -261,12 +266,15 @@ Implemented:
 - `/rp texting-state`
 - `/rp hooks-status`
 - `/rp queue`
+- `/rp debug [-on|-off|-status]`
 
 Current behavior:
 
 - `/rp state` and `/rp texting-state` show the active session, card/preset, turn counts, selected texting runtime state fields, companion schedule status, and pending delayed-message count.
 - `/rp queue` shows pending delayed messages for the active session. `-all` shows all pending delayed messages visible to the store; `-limit N` controls row count.
 - `/rp hooks-status` in native OpenClaw mode shows configured and registered hook status, including conversation access and optional hook flags.
+- `/rp debug` toggles per-session prompt/output tracing. Native OpenClaw mode writes JSONL entries to `rp-debug-trace.log` under the plugin state directory, capturing `before_prompt_build` system prompt/context/user content and `llm_output` raw/stored text while enabled.
+- Debug trace is intentionally opt-in because it can contain complete private prompt, card, lore, memory, and user-message text.
 
 Follow-up:
 

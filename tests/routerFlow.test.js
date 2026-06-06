@@ -535,3 +535,34 @@ test("debug state and queue commands expose texting runtime details", async () =
   assert.match(queue.response.data.text, /texting_delayed_reply/);
   assert.equal(queue.response.data.messages.length, 1);
 });
+
+test("debug trace command toggles active session tracing", async () => {
+  const plugin = createRPPlugin({
+    getDebugTracePath: () => "/tmp/openclaw-rp/rp-debug-trace.log",
+    modelProvider: {
+      async generate() {
+        return { content: "assistant reply" };
+      },
+    },
+  });
+
+  let r = await plugin.hooks.message_received(
+    makeCtx("/rp import-card", {
+      attachments: [{ filename: "alice.json", buffer: Buffer.from(JSON.stringify({ name: "Alice", description: "role" })) }],
+    }),
+  );
+  const cardId = r.response.data.asset_id;
+  await plugin.hooks.message_received(makeCtx(`/rp start -card ${cardId}`));
+
+  const enabled = await plugin.hooks.message_received(makeCtx("/rp debug -on"));
+  assert.equal(enabled.response.ok, true);
+  assert.equal(enabled.response.data.enabled, true);
+  assert.match(enabled.response.data.text, /enabled: yes/);
+  assert.match(enabled.response.data.text, /rp-debug-trace\.log/);
+
+  const status = await plugin.hooks.message_received(makeCtx("/rp debug"));
+  assert.equal(status.response.data.enabled, true);
+
+  const disabled = await plugin.hooks.message_received(makeCtx("/rp debug -off"));
+  assert.equal(disabled.response.data.enabled, false);
+});

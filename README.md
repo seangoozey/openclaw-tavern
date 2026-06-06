@@ -123,6 +123,7 @@ Note: install entry names vary by gateway version (plugin manager button vs admi
 - `/rp companion-nudge [-reason "..."] [-idle-minutes N] [-mode balanced|checkin|question|report] [-force]`
 - `/rp companion-auto [-enable|-disable] [-min-hours N] [-max-per-day N] [-quiet-hours HH:MM-HH:MM] [-idle-minutes N] [-mode balanced|checkin|question|report]`
 - `/rp state` - show active session, texting runtime state, companion schedule, and delayed-message count
+- `/rp debug [-on|-off|-status]` - trace active-session prompt/output text to `rp-debug-trace.log`
 - `/rp queue [-all] [-limit N]` - show pending delayed RP messages
 - `/rp hooks-status` - show native OpenClaw hook config/registration status
 - `/rp init` - initialize the OpenClaw agent as the RP host/controller by writing managed blocks to `IDENTITY.md` and `SOUL.md`

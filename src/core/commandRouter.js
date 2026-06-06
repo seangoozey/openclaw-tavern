@@ -179,6 +179,7 @@ function helpText() {
     "  /rp companion-nudge [-reason \"...\"] [-idle-minutes N] [-mode balanced|checkin|question|report] [-force]",
     "  /rp companion-auto [-enable|-disable] [-min-hours N] [-max-per-day N] [-quiet-hours HH:MM-HH:MM]",
     "  /rp state        Show active RP session/debug state",
+    "  /rp debug [-on|-off|-status]  Trace active RP prompt/output text",
     "  /rp queue        Show pending delayed RP messages",
     "  /rp hooks-status Show native OpenClaw hook config/status when available",
     "  /rp pause / resume / end",
@@ -500,6 +501,7 @@ export class CommandRouter {
     rateLimiter,
     getAgentImageConfig,
     updateAgentImageConfig,
+    getDebugTracePath,
   }) {
     this.store = store;
     this.sessionManager = sessionManager;
@@ -510,7 +512,9 @@ export class CommandRouter {
     this.rateLimiter = rateLimiter || new InMemoryRateLimiter({ windowMs: 5000 });
     this.getAgentImageConfig = getAgentImageConfig;
     this.updateAgentImageConfig = updateAgentImageConfig;
+    this.getDebugTracePath = getDebugTracePath;
     this.lastImportedCardByContext = new Map();
+    this.debugTraceSessionIds = new Set();
   }
 
   async handleMessage(ctx) {
@@ -597,6 +601,8 @@ export class CommandRouter {
       case "state":
       case "texting-state":
         return this.debugState(nctx);
+      case "debug":
+        return this.debugTrace(nctx, options, args);
       case "queue":
         return this.debugQueue(nctx, options);
       case "hooks-status":
@@ -1065,6 +1071,53 @@ export class CommandRouter {
       state_row: stateRow,
       pending_delayed_messages: delayed,
       companion_schedule: schedule,
+    });
+  }
+
+  isDebugTraceEnabled(sessionId) {
+    return this.debugTraceSessionIds.has(String(sessionId || ""));
+  }
+
+  debugTrace(ctx, options = {}, args = []) {
+    const session = this.store.getSessionByChannelKey(buildChannelSessionKey(ctx));
+    if (!session || session.user_id !== ctx.userId) {
+      throw new RPError(RP_ERROR_CODES.SESSION_NOT_FOUND, "No session in this channel");
+    }
+
+    const action = options.on
+      ? "on"
+      : options.off
+        ? "off"
+        : options.status
+          ? "status"
+          : String(args[0] || "status").replace(/^-+/, "").toLowerCase();
+
+    if (["on", "enable", "enabled", "true"].includes(action)) {
+      this.debugTraceSessionIds.add(session.id);
+    } else if (["off", "disable", "disabled", "false"].includes(action)) {
+      this.debugTraceSessionIds.delete(session.id);
+    } else if (!["status", ""].includes(action)) {
+      throw new RPError(RP_ERROR_CODES.BAD_REQUEST, "Use /rp debug -on, /rp debug -off, or /rp debug -status");
+    }
+
+    const enabled = this.isDebugTraceEnabled(session.id);
+    const tracePath =
+      typeof this.getDebugTracePath === "function"
+        ? this.getDebugTracePath()
+        : null;
+    const lines = [
+      "RP debug trace",
+      `- session: ${session.id}`,
+      `- enabled: ${enabled ? "yes" : "no"}`,
+      tracePath ? `- file: ${tracePath}` : "- file: unavailable in this runtime",
+      "- captures: prompt/system/context text and raw/normalized model output while enabled",
+    ];
+
+    return ok("RP debug trace", {
+      text: lines.join("\n"),
+      session_id: session.id,
+      enabled,
+      trace_file: tracePath || undefined,
     });
   }
 

@@ -29,6 +29,7 @@ export function createRPPlugin(options = {}) {
     rateLimiter: options.rateLimiter,
     getAgentImageConfig: options.getAgentImageConfig,
     updateAgentImageConfig: options.updateAgentImageConfig,
+    getDebugTracePath: options.getDebugTracePath,
   });
 
   return {

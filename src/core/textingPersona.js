@@ -128,6 +128,34 @@ function stripDialogueLabel(line, charName) {
     .trim();
 }
 
+function stripQuoteEdges(value) {
+  return String(value || "")
+    .replace(/^["'`\u201c\u201d]+|["'`\u201c\u201d]+$/g, "")
+    .trim();
+}
+
+function normalizeForEchoCompare(value) {
+  return stripQuoteEdges(value)
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function stripWholeResponseQuotes(text) {
+  let out = String(text || "").trim();
+  for (const [open, close] of [
+    ['"', '"'],
+    ["'", "'"],
+    ["`", "`"],
+    ["\u201c", "\u201d"],
+  ]) {
+    if (out.startsWith(open) && out.endsWith(close) && out.length > 1) {
+      out = out.slice(1, -1).trim();
+    }
+  }
+  return out;
+}
+
 function removeNarrationLines(lines) {
   return lines.filter((line) => {
     const text = String(line || "").trim();
@@ -141,6 +169,27 @@ function removeNarrationLines(lines) {
       return false;
     }
     return true;
+  });
+}
+
+function removeEchoedUserLines(lines, userText) {
+  const normalizedUser = normalizeForEchoCompare(userText);
+  if (!normalizedUser) {
+    return lines;
+  }
+  return lines.filter((line) => {
+    const text = String(line || "").trim();
+    if (/^(?:user|you|\{\{user\}\})\s*:/i.test(text)) {
+      return false;
+    }
+    const normalizedLine = normalizeForEchoCompare(text.replace(/^(?:user|you|\{\{user\}\})\s*:/i, ""));
+    if (!normalizedLine) {
+      return false;
+    }
+    if (normalizedLine === normalizedUser) {
+      return false;
+    }
+    return !(normalizedUser.length >= 12 && normalizedLine.includes(normalizedUser));
   });
 }
 
@@ -188,6 +237,14 @@ function violatesBoundary(line, profile) {
   const lower = text.toLowerCase();
 
   if (
+    /\b(?:i am|i'm|as|being)\s+(?:an?\s+)?(?:ai|artificial intelligence|language model|chatbot|virtual assistant|assistant)\b/.test(lower) ||
+    /\b(?:i do not|i don't|i cannot|i can't)\s+(?:have|possess|experience)\s+(?:an?\s+)?(?:age|body|feelings|personal life|real life)\b/.test(lower) ||
+    /\b(?:i have no|i don't have any)\s+(?:age|body|concept of age|personal experiences)\b/.test(lower)
+  ) {
+    return true;
+  }
+
+  if (
     profile.textOnly &&
     /\b(meet up|meet in person|come over|come to my|come to your|see you in person|pick me up|drop by|my place|your place)\b/.test(lower)
   ) {
@@ -215,18 +272,25 @@ function violatesBoundary(line, profile) {
   return false;
 }
 
+function identityFallback(config) {
+  const fallback = config?.proactive_texting?.fallback_messages || {};
+  return pickFirstFallback(fallback.identity_break, fallback.default) || "wait, sorry, that came out weird";
+}
+
 export function applyTextingPersonaBoundaryGuard(text, config) {
   const profile = inferBoundaryProfile(config);
-  if (!profile.textOnly && !profile.avoidLocation && !profile.avoidContact) {
-    return String(text || "").trim();
-  }
   const kept = String(text || "")
     .replace(/\r\n/g, "\n")
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
     .filter((line) => !violatesBoundary(line, profile));
-  return kept.join("\n").trim();
+  const normalized = kept.join("\n").trim();
+  if (normalized) {
+    return normalized;
+  }
+  const hadContent = String(text || "").trim();
+  return hadContent ? identityFallback(config) : "";
 }
 
 function getCardData(card) {
@@ -637,6 +701,7 @@ export function buildTextingPersonaPromptBlock({ config, state, now = new Date()
     `- evaluated_at: ${now.toISOString()}`,
     "",
     `Use this state as live simulation context. If attention_level is asleep or unavailable, reply briefly, belatedly, or not with full emotional availability. If ${charName || "the character"} is in class or distracted, keep messages short. Let ordinary life, schedule, privacy, and uneven mood affect the response.`,
+    `Identity guard: write only as ${charName || "the character"} inside the card premise. Never identify as an AI, assistant, chatbot, language model, or system. Do not answer with base-assistant disclaimers about not having an age, body, feelings, memories, or a real life.`,
   ].filter(Boolean);
 
   const styleRules = Array.isArray(config?.message_style?.rules)
@@ -792,7 +857,7 @@ export function decideTextingPersonaAvailability({ config, state, now = new Date
   };
 }
 
-export function normalizeTextingPersonaOutput(text, config, { proactive = false, charName } = {}) {
+export function normalizeTextingPersonaOutput(text, config, { proactive = false, charName, userText } = {}) {
   const limits = config?.message_style?.output_limits || {};
   const maxMessages = proactive
     ? toPositiveInt(limits.proactive_max_messages, toPositiveInt(limits.max_messages, 3))
@@ -802,11 +867,11 @@ export function normalizeTextingPersonaOutput(text, config, { proactive = false,
     : toPositiveInt(limits.max_total_chars, 420);
   const maxCharsPerMessage = toPositiveInt(limits.max_chars_per_message, 180);
 
-  const rawLines = String(text || "")
+  const rawLines = stripWholeResponseQuotes(text)
     .replace(/\r\n/g, "\n")
     .split("\n")
-    .map((line) => stripDialogueLabel(line, charName));
-  const sourceLines = removeNarrationLines(rawLines);
+    .map((line) => stripQuoteEdges(stripDialogueLabel(line, charName)));
+  const sourceLines = removeEchoedUserLines(removeNarrationLines(rawLines), userText);
   const messages = [];
   for (const line of sourceLines) {
     for (const chunk of sentenceChunks(line, maxCharsPerMessage)) {

@@ -948,6 +948,18 @@ async function appendHookTrace(stateDir, payload) {
   await writeFile(file, `${line}\n`, { flag: "a" });
 }
 
+async function appendRpDebugTrace(stateDir, payload) {
+  if (!stateDir || !payload) {
+    return;
+  }
+  const file = path.join(stateDir, "rp-debug-trace.log");
+  const line = JSON.stringify({
+    at: new Date().toISOString(),
+    ...payload,
+  });
+  await writeFile(file, `${line}\n`, { flag: "a" });
+}
+
 function escapeQuotedArg(value) {
   return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
@@ -2792,6 +2804,7 @@ export default {
         logger: api.logger,
         getAgentImageConfig: getCurrentAgentImageConfig,
         updateAgentImageConfig,
+        getDebugTracePath: () => (stateDir ? path.join(stateDir, "rp-debug-trace.log") : null),
       });
       router = plugin.services.router;
       sessionManager = plugin.services.sessionManager;
@@ -3322,6 +3335,21 @@ export default {
 
         api.logger?.info?.(`[openclaw-rp] before_prompt_build: injecting RP prompt for session ${session.id}, systemPrompt=${systemPrompt.length}chars, context=${(prependContext || "").length}chars`);
 
+        if (router?.isDebugTraceEnabled?.(session.id)) {
+          void appendRpDebugTrace(stateDir, {
+            kind: "before_prompt_build",
+            session_id: session.id,
+            channel_key: rpCtx.channelKey || "",
+            agent_session_key: asString(ctx?.sessionKey),
+            user_content: rpCtx.userContent || "",
+            system_prompt: systemPrompt,
+            prepend_context: prependContext || "",
+            prompt_messages: prompt.messages,
+          }).catch((err) => {
+            api.logger?.warn?.(`[openclaw-rp] debug trace prompt write failed: ${String(err?.message || err)}`);
+          });
+        }
+
         return {
           systemPrompt,
           prependContext,
@@ -3360,6 +3388,7 @@ export default {
             if (textingPersona) {
               const normalized = normalizeTextingPersonaOutput(lastText, textingPersona.config, {
                 charName: textingPersona.charName,
+                userText: rpCtx.userContent || "",
               });
               if (normalized) {
                 storedText = normalized;
@@ -3373,6 +3402,20 @@ export default {
             }
           } catch (err) {
             api.logger?.warn?.(`[openclaw-rp] llm_output texting normalization failed: ${String(err?.message || err)}`);
+          }
+
+          if (router?.isDebugTraceEnabled?.(session.id)) {
+            void appendRpDebugTrace(stateDir, {
+              kind: "llm_output",
+              session_id: session.id,
+              channel_key: rpCtx.channelKey || "",
+              agent_session_key: asString(ctx?.sessionKey),
+              raw_output: lastText,
+              stored_output: storedText,
+              normalized: storedText !== lastText,
+            }).catch((err) => {
+              api.logger?.warn?.(`[openclaw-rp] debug trace output write failed: ${String(err?.message || err)}`);
+            });
           }
 
           const assistantTurn = store.appendTurn({
@@ -3475,6 +3518,7 @@ export default {
           }
           normalized = normalizeTextingPersonaOutput(rawContent, textingPersona.config, {
             charName: textingPersona.charName,
+            userText: rpCtx.userContent || "",
           });
         }
 
@@ -3516,6 +3560,7 @@ export default {
             }
             normalized = normalizeTextingPersonaOutput(rawContent, textingPersona.config, {
               charName: textingPersona.charName,
+              userText: rpCtx.userContent || "",
             });
           }
 
