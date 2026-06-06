@@ -3168,13 +3168,28 @@ export default {
             },
             ctx || {},
           );
-      const channelSessionKey = buildChannelSessionKey(routerCtx);
+      let channelSessionKey = buildChannelSessionKey(routerCtx);
       logOwnedTrace("fired", {
         content_preview: previewText(content, 120),
         channelSessionKey,
         router_ctx: routerCtx,
       });
-      const session = store.getSessionByChannelKey(channelSessionKey);
+      let session = null;
+      if (recoveredRpCtx?.session?.id) {
+        session = store.getSessionById(recoveredRpCtx.session.id);
+        if (!session || asString(session.status).toLowerCase() === "ended") {
+          deleteRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, recoveredRpCtx);
+          logOwnedTrace("stale_recovered_context", {
+            sessionId: recoveredRpCtx.session.id,
+            channelSessionKey,
+            status: session?.status || "missing",
+          });
+          return undefined;
+        }
+        channelSessionKey = session.channel_session_key || channelSessionKey;
+      } else {
+        session = store.getSessionByChannelKey(channelSessionKey);
+      }
       if (!session) {
         logOwnedTrace("no_active_session", {
           channelSessionKey,
@@ -3496,8 +3511,9 @@ export default {
           asString(hookCtx?.channelId || routerCtx.channelType),
           asString(hookCtx?.conversationId || routerCtx.platformContextId),
         ].filter(Boolean).join(":").toLowerCase();
+        const agentSessionKey = asString(hookCtx?.sessionKey || hookCtx?.session_key);
         cleanupRpContextMaps(activeRpContextByAgentSessionKey, activeRpContextByChannel, rpContextTtlMs);
-        rememberRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, {
+        const rpContextPayload = {
           at: Date.now(),
           session,
           routerCtx,
@@ -3514,7 +3530,23 @@ export default {
                   messageThreadId: resolveHookThreadId(event, hookCtx),
                 }
               : null,
-        }, channelKey);
+        };
+        rememberRpContext(
+          activeRpContextByAgentSessionKey,
+          activeRpContextByChannel,
+          rpContextPayload,
+          channelKey,
+          agentSessionKey,
+        );
+        if (asString(session.channel_session_key)) {
+          rememberRpContext(
+            activeRpContextByAgentSessionKey,
+            activeRpContextByChannel,
+            rpContextPayload,
+            asString(session.channel_session_key).toLowerCase(),
+            null,
+          );
+        }
 
         api.logger?.info?.(`[openclaw-rp] message_received: appended user turn to session ${session.id}, channelKey=${channelKey}`);
       } catch (err) {

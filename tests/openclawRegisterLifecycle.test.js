@@ -603,6 +603,32 @@ test("owned native RP hook claims active session turn and caches duplicate hooks
     assert.equal(recovered.claimed, true);
     assert.equal(recovered.content, "barely. what's up?");
     assert.equal(chatCalls, 2);
+
+    await hooks.get("before_prompt_build")({}, hookCtx);
+    result = await rp.handler({
+      ...baseCtx,
+      commandBody: "/rp end",
+    });
+    assert.equal(result.isError, undefined);
+    result = await rp.handler({
+      ...baseCtx,
+      commandBody: "/rp start --card Nina",
+    });
+    assert.equal(result.isError, undefined);
+    await hooks.get("message_received")(
+      {
+        id: "msg-3",
+        content: "new session?",
+        metadata: {
+          senderId: "u1",
+        },
+      },
+      hookCtx,
+    );
+    const afterRestart = await hooks.get("before_agent_reply")({}, hookCtx);
+    assert.equal(afterRestart.claimed, true);
+    assert.equal(afterRestart.content, "barely. what's up?");
+    assert.equal(chatCalls, 3);
   } finally {
     services.get("openclaw-rp-sqlite")?.stop();
     globalThis.fetch = originalFetch;
