@@ -58,6 +58,25 @@ export const openclawRpPluginConfigSchema = {
         },
       },
     },
+    provider: {
+      type: "string",
+      enum: ["inherit", "openai", "gemini"],
+      default: "inherit",
+      description:
+        "Provider stack used by plugin-owned RP generation. inherit follows OpenClaw/global provider config when available.",
+    },
+    openai: {
+      type: "object",
+      additionalProperties: true,
+      description:
+        "OpenAI-compatible provider config for plugin-owned RP generation, for example apiKey, baseUrl, model, imageModel, and embeddingModel.",
+    },
+    gemini: {
+      type: "object",
+      additionalProperties: true,
+      description:
+        "Gemini provider config for plugin-owned RP generation, for example apiKey, model, imageModel, and embeddingModel.",
+    },
     nativeHooks: {
       type: "object",
       additionalProperties: false,

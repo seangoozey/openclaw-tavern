@@ -2059,6 +2059,21 @@ function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function mergeConfigObjects(base, override) {
+  const out = isObject(base) ? { ...base } : {};
+  if (!isObject(override)) {
+    return out;
+  }
+  for (const [key, value] of Object.entries(override)) {
+    if (isObject(value) && isObject(out[key])) {
+      out[key] = mergeConfigObjects(out[key], value);
+    } else if (value !== undefined) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 function readConfigPath(input, pathTokens) {
   let cur = input;
   for (const token of pathTokens) {
@@ -2372,9 +2387,10 @@ function resolveProviderConfig(apiConfig, overrides = {}) {
   // Try to read provider config from JSON file (most reliable for systemd-managed gateways)
   const fileConfig = loadProviderFileConfig();
   const openclawConfig = loadOpenClawFileConfig();
-  const rootConfig =
-    isObject(apiConfig) && Object.keys(apiConfig).length > 0 ? apiConfig : openclawConfig;
-  const inherited = extractInheritedProviderConfig(rootConfig);
+  const rootConfig = mergeConfigObjects(openclawConfig, apiConfig);
+  const pluginConfig = getOpenClawRpPluginConfig(rootConfig);
+  const providerConfigView = mergeConfigObjects(rootConfig, pluginConfig);
+  const inherited = extractInheritedProviderConfig(providerConfigView);
   const forcedProvider = normalizeProviderHint(overrides.provider);
   const explicitProvider = normalizeProviderHint(
     firstNonEmptyValue([

@@ -29,6 +29,7 @@ The agent should instead be initialized as an RP host/controller. The card chara
 - `/rp init` is live-verified to write the correct agent's `IDENTITY.md` and `SOUL.md`.
 - Native hook injection still has some uncertainty due to optional hook availability and payload shape.
 - Live test with `nativeHooks.beforeAgentReply=true` shows `before_agent_reply` does fire on Telegram direct messages, but the hook payload can be contentless. The plugin now recovers the user text/router context from the preceding `message_received` RP context before trying to claim the turn.
+- Live follow-up showed `before_agent_reply hook failed: Model provider is not configured`. That means the owned-generation hook path is being reached, but plugin-owned generation needs its own provider config. Resolver support was expanded so plugin-local provider config under `plugins.entries.openclaw-rp-plugin.config` is recognized, and file/runtime OpenClaw config is merged instead of a partial `api.config` hiding `~/.openclaw/openclaw.json`.
 - `reply_payload_sending` is opt-in because the target OpenClaw Docker runtime logs it as unknown.
 - `llm_output` requires `plugins.entries.openclaw-rp-plugin.hooks.allowConversationAccess=true`.
 - `/rp sync-agent-persona` remains legacy/manual character override mode, not the default architecture.
@@ -57,6 +58,7 @@ Next live tests:
 - Enable `nativeHooks.beforeAgentReply` only, restart the real gateway/container process as needed, run `/rp hooks-status`, and send one normal RP message.
 - Look for `[openclaw-rp] before_agent_reply: fired` and `claimed`.
 - If `before_agent_reply` logs `recovered_content_from_active_context`, `fired`, and `claimed`, confirm whether OpenClaw suppresses the normal base-agent response and sends only the synthetic RP response.
+- If `before_agent_reply` reaches generation but logs `Model provider is not configured`, add OpenAI-compatible or Gemini config under `plugins.entries.openclaw-rp-plugin.config` or verify the global OpenClaw provider config is visible to the plugin process.
 - If `before_agent_reply` fires but does not suppress the base-agent response, disable it and enable `nativeHooks.beforeAgentRun` only, then repeat.
 - If `before_agent_reply` does not fire in a future build, disable it and enable `nativeHooks.beforeAgentRun` only, then repeat.
 - If neither fires for Telegram, assume no pre-agent owned-generation hook is available on this runtime path and focus on either prompt architecture improvements or a Telegram-delivery bypass strategy.

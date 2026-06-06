@@ -194,6 +194,13 @@ Add plugin config under your OpenClaw config:
         },
         "config": {
           "allowedAgents": ["main"],
+          "provider": "openai",
+          "openai": {
+            "apiKey": "sk-...",
+            "baseUrl": "https://api.openai.com/v1",
+            "model": "gpt-4o-mini",
+            "embeddingModel": "text-embedding-3-small"
+          },
           "agentImage": {
             "enabled": true,
             "provider": "openai",

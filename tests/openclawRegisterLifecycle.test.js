@@ -430,16 +430,17 @@ test("owned native RP hook claims active session turn and caches duplicate hooks
         hooks,
         services,
         config: {
-          openai: {
-            apiKey: "test-key",
-            baseUrl: "https://rp-hook-test.invalid/v1",
-            model: "test-chat",
-            embeddingModel: "test-embed",
-          },
           plugins: {
             entries: {
               "openclaw-rp-plugin": {
                 config: {
+                  provider: "openai",
+                  openai: {
+                    apiKey: "test-key",
+                    baseUrl: "https://rp-hook-test.invalid/v1",
+                    model: "test-chat",
+                    embeddingModel: "test-embed",
+                  },
                   nativeHooks: {
                     inboundClaim: true,
                     beforeAgentReply: true,
