@@ -502,6 +502,8 @@ export class CommandRouter {
     getAgentImageConfig,
     updateAgentImageConfig,
     getDebugTracePath,
+    getHookTracePath,
+    initializeDebugTracePath,
   }) {
     this.store = store;
     this.sessionManager = sessionManager;
@@ -513,6 +515,8 @@ export class CommandRouter {
     this.getAgentImageConfig = getAgentImageConfig;
     this.updateAgentImageConfig = updateAgentImageConfig;
     this.getDebugTracePath = getDebugTracePath;
+    this.getHookTracePath = getHookTracePath;
+    this.initializeDebugTracePath = initializeDebugTracePath;
     this.lastImportedCardByContext = new Map();
     this.debugTraceSessionIds = new Set();
   }
@@ -1078,7 +1082,7 @@ export class CommandRouter {
     return this.debugTraceSessionIds.has(String(sessionId || ""));
   }
 
-  debugTrace(ctx, options = {}, args = []) {
+  async debugTrace(ctx, options = {}, args = []) {
     const session = this.store.getSessionByChannelKey(buildChannelSessionKey(ctx));
     if (!session || session.user_id !== ctx.userId) {
       throw new RPError(RP_ERROR_CODES.SESSION_NOT_FOUND, "No session in this channel");
@@ -1105,12 +1109,21 @@ export class CommandRouter {
       typeof this.getDebugTracePath === "function"
         ? this.getDebugTracePath(ctx, session)
         : null;
+    if (enabled && tracePath && typeof this.initializeDebugTracePath === "function") {
+      await this.initializeDebugTracePath(tracePath, ctx, session);
+    }
+    const hookTracePath =
+      typeof this.getHookTracePath === "function"
+        ? this.getHookTracePath(ctx, session)
+        : null;
     const lines = [
       "RP debug trace",
       `- session: ${session.id}`,
       `- enabled: ${enabled ? "yes" : "no"}`,
       tracePath ? `- file: ${tracePath}` : "- file: unavailable in this runtime",
+      hookTracePath ? `- hook file: ${hookTracePath}` : "- hook file: unavailable in this runtime",
       "- captures: prompt/system/context text and raw/normalized model output while enabled",
+      "- hook file captures owned-turn claim hook diagnostics when those hooks fire",
     ];
 
     return ok("RP debug trace", {
@@ -1118,6 +1131,7 @@ export class CommandRouter {
       session_id: session.id,
       enabled,
       trace_file: tracePath || undefined,
+      hook_trace_file: hookTracePath || undefined,
     });
   }
 

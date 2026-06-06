@@ -970,6 +970,19 @@ async function appendRpDebugTraceFile(filePath, payload) {
   await writeFile(filePath, `${line}\n`, { flag: "a" });
 }
 
+async function initializeDebugTraceFile(filePath, payload = {}) {
+  if (!filePath) {
+    return;
+  }
+  await mkdir(path.dirname(filePath), { recursive: true });
+  const line = JSON.stringify({
+    at: new Date().toISOString(),
+    kind: "debug_trace_enabled",
+    ...payload,
+  });
+  await writeFile(filePath, `${line}\n`, { flag: "a" });
+}
+
 function escapeQuotedArg(value) {
   return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
@@ -2779,7 +2792,7 @@ export default {
           agentId,
         });
         if (workspaceDir) {
-          return path.join(workspaceDir, ".openclaw-rp", "debug", `rp-debug-trace-${safeSessionId}.log`);
+          return path.join(workspaceDir, "debug", `rp-debug-trace-${safeSessionId}.log`);
         }
       } catch (err) {
         api.logger?.warn?.(`[openclaw-rp] debug trace workspace resolution failed: ${String(err?.message || err)}`);
@@ -2838,6 +2851,13 @@ export default {
         getAgentImageConfig: getCurrentAgentImageConfig,
         updateAgentImageConfig,
         getDebugTracePath: (ctx, session) => resolveRpDebugTracePath({ sessionId: session?.id, ctx }),
+        getHookTracePath: () => (stateDir ? path.join(stateDir, "hook-debug.log") : null),
+        initializeDebugTracePath: (filePath, ctx, session) =>
+          initializeDebugTraceFile(filePath, {
+            session_id: session?.id || "",
+            hook_trace_file: stateDir ? path.join(stateDir, "hook-debug.log") : "",
+            note: "This file is created when /rp debug is enabled. Prompt/output entries appear after active RP turns.",
+          }),
       });
       router = plugin.services.router;
       sessionManager = plugin.services.sessionManager;

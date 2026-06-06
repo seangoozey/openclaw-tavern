@@ -312,6 +312,69 @@ test("/rp init uses agent id from command session key", async () => {
   }
 });
 
+test("/rp debug writes trace file under active agent workspace debug directory", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const mainWorkspace = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-main-workspace-"));
+  const rpWorkspace = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-rp-workspace-"));
+  const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));
+  const cardPath = path.join(assetDir, "card.json");
+  const commands = new Map();
+  const services = new Map();
+  const hooks = new Map();
+
+  await writeFile(cardPath, JSON.stringify({ name: "Nina", description: "role" }), "utf8");
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        services,
+        hooks,
+        config: {
+          agents: {
+            list: [
+              { id: "main", default: true, workspace: mainWorkspace },
+              { id: "rp", workspace: rpWorkspace },
+            ],
+          },
+        },
+      }),
+    );
+
+    const rp = commands.get("rp");
+    const baseCtx = {
+      channel: "telegram",
+      channelId: "telegram",
+      conversationId: "555",
+      senderId: "u1",
+      from: "u1",
+      sessionKey: "agent:rp:telegram:direct:555",
+    };
+
+    let result = await rp.handler({ ...baseCtx, commandBody: `/rp import-card --file "${cardPath}"` });
+    assert.equal(result.isError, undefined);
+    result = await rp.handler({ ...baseCtx, commandBody: "/rp start -card Nina" });
+    assert.equal(result.isError, undefined);
+    result = await rp.handler({ ...baseCtx, commandBody: "/rp debug -on" });
+    assert.equal(result.isError, undefined);
+
+    const expectedTracePath = path.join(rpWorkspace, "debug");
+    assert.match(result.text, new RegExp(expectedTracePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.doesNotMatch(result.text, /\.openclaw-rp/);
+    const traceFile = result.text.match(/file: (.+rp-debug-trace-[^\n]+)/)?.[1];
+    assert.ok(traceFile);
+    const traceText = await readFile(traceFile.trim(), "utf8");
+    assert.match(traceText, /debug_trace_enabled/);
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(mainWorkspace, { recursive: true, force: true });
+    await rm(rpWorkspace, { recursive: true, force: true });
+    await rm(assetDir, { recursive: true, force: true });
+  }
+});
+
 test("owned native RP hook claims active session turn and caches duplicate hooks", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
   const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));

@@ -30,6 +30,8 @@ export function createRPPlugin(options = {}) {
     getAgentImageConfig: options.getAgentImageConfig,
     updateAgentImageConfig: options.updateAgentImageConfig,
     getDebugTracePath: options.getDebugTracePath,
+    getHookTracePath: options.getHookTracePath,
+    initializeDebugTracePath: options.initializeDebugTracePath,
   });
 
   return {

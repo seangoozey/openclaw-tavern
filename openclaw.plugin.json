@@ -2,7 +2,7 @@
   "id": "openclaw-rp-plugin",
   "name": "OpenClaw SillyTavern Plugin",
   "description": "SillyTavern-compatible role-play command plugin for OpenClaw with long memory, multimodal output, and Generative-Agents-style companion.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": "garfeildma",
   "homepage": "https://github.com/garfeildma/openclaw-tavern",
   "license": "MIT",

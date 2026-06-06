@@ -275,7 +275,9 @@ Current behavior:
 - `/rp state` and `/rp texting-state` show the active session, card/preset, turn counts, selected texting runtime state fields, companion schedule status, and pending delayed-message count.
 - `/rp queue` shows pending delayed messages for the active session. `-all` shows all pending delayed messages visible to the store; `-limit N` controls row count.
 - `/rp hooks-status` in native OpenClaw mode shows configured and registered hook status, including conversation access and optional hook flags.
-- `/rp debug` toggles per-session prompt/output tracing. Native OpenClaw mode writes JSONL entries to a session-specific `rp-debug-trace-<session>.log`, preferring the active agent workspace's `.openclaw-rp/debug/` directory and falling back to plugin state if the workspace cannot be resolved.
+- `/rp debug` toggles per-session prompt/output tracing. Native OpenClaw mode writes JSONL entries to a session-specific `rp-debug-trace-<session>.log`, preferring the active agent workspace's `debug/` directory and falling back to plugin state if the workspace cannot be resolved.
+- `/rp debug -on` creates the prompt/output trace file immediately so the displayed path is inspectable before the next turn.
+- `/rp debug` also shows the plugin-state `hook-debug.log` path. That file receives owned-turn claim diagnostics only when a candidate claim hook actually fires.
 - Debug trace is intentionally opt-in because it can contain complete private prompt, card, lore, memory, and user-message text.
 
 Follow-up:
