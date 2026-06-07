@@ -81,6 +81,23 @@
           }
         }
       },
+      "provider": {
+        "type": "string",
+        "enum": [
+          "inherit",
+          "openai",
+          "gemini"
+        ],
+        "default": "inherit"
+      },
+      "openai": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "gemini": {
+        "type": "object",
+        "additionalProperties": true
+      },
       "nativeHooks": {
         "type": "object",
         "additionalProperties": false,
