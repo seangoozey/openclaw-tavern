@@ -3104,6 +3104,37 @@ export default {
       sessionManager = plugin.services.sessionManager;
     }
 
+    function refreshPluginOwnedProviders(reason = "manual") {
+      if (!router || !sessionManager) {
+        return null;
+      }
+      const providers = resolveProviderConfig(api?.config);
+      if (providers?.modelProvider?.generate) {
+        sessionManager.modelProvider = providers.modelProvider;
+        router.modelProvider = providers.modelProvider;
+      }
+      if (providers?.embeddingProvider?.embed) {
+        sessionManager.embeddingProvider = providers.embeddingProvider;
+      }
+      if (providers?.ttsProvider) {
+        router.ttsProvider = providers.ttsProvider;
+      }
+      if (providers?.imageProvider) {
+        router.imageProvider = providers.imageProvider;
+      }
+      if (providers?.videoProvider) {
+        router.videoProvider = providers.videoProvider;
+      }
+      const summary = {
+        reason,
+        ...summarizePluginOwnedProviderConfig(api?.config),
+        modelProviderAvailable: Boolean(sessionManager.modelProvider?.generate),
+        embeddingProviderAvailable: Boolean(sessionManager.embeddingProvider?.embed),
+      };
+      api.logger?.info?.(`[openclaw-rp] plugin-owned provider refresh ${JSON.stringify(summary)}`);
+      return summary;
+    }
+
     function cleanupOwnedNativeTurnCache(now = Date.now()) {
       for (const [key, item] of ownedNativeTurnCache) {
         if (now - item.at > ownedNativeTurnTtlMs) {
@@ -3327,6 +3358,9 @@ export default {
 
     async function runOwnedHarnessRpGeneration(params = {}) {
       await ensureInitialized();
+      if (!sessionManager?.modelProvider?.generate) {
+        refreshPluginOwnedProviders("owned_generation_preflight");
+      }
       const routerCtx = buildHarnessRouterContext(params);
       const content = asString(routerCtx.content);
       const channelSessionKey = buildChannelSessionKey(routerCtx);
@@ -3411,6 +3445,15 @@ export default {
       } catch (err) {
         const rpErr = asRPError(err);
         if (rpErr.code === RP_ERROR_CODES.MODEL_UNAVAILABLE) {
+          const refreshed = refreshPluginOwnedProviders("owned_generation_model_unavailable");
+          if (refreshed?.modelProviderAvailable) {
+            handled = await sessionManager.processDialogue({
+              channelSessionKey: session.channel_session_key || channelSessionKey,
+              userId: session.user_id,
+              content,
+              userTurnAlreadyStored: true,
+            });
+          } else {
           const runtimeSummary = summarizeOwnedHarnessRuntimeAccess(params);
           const pluginProviderSummary = summarizePluginOwnedProviderConfig(api?.config);
           api.logger?.warn?.(
@@ -3421,8 +3464,11 @@ export default {
             "RP owned generation reached the active session, but the plugin model provider is not configured. Configure a plugin-owned provider/API key or keep agentHarness.ownedGeneration disabled until OpenClaw runtime auth reuse is implemented.",
             { agentHarnessId: "openclaw-rp-owned-generation" },
           );
+          }
         }
-        throw err;
+        if (!handled) {
+          throw err;
+        }
       }
       const text = formatDialogueHandledText(handled);
       if (!text) {
