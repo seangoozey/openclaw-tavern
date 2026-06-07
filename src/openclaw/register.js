@@ -2192,6 +2192,30 @@ function isLocalBaseUrl(value) {
   }
 }
 
+function normalizeReasoningConfig(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const out = {};
+  if (typeof value.enabled === "boolean") out.enabled = value.enabled;
+  if (typeof value.exclude === "boolean") out.exclude = value.exclude;
+  const effort = asString(value.effort).toLowerCase();
+  if (effort) out.effort = effort;
+  const maxTokens = Number(value.maxTokens ?? value.max_tokens);
+  if (Number.isFinite(maxTokens) && maxTokens > 0) out.max_tokens = Math.floor(maxTokens);
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function normalizeOptionalBoolean(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const raw = value.trim().toLowerCase();
+    if (raw === "true") return true;
+    if (raw === "false") return false;
+  }
+  return undefined;
+}
+
 export function createTelegramBotApiRuntime({ botToken, apiBaseUrl = "https://api.telegram.org", timeoutMs = 15000 } = {}) {
   const token = asString(botToken);
   if (!token) {
@@ -2558,6 +2582,8 @@ function resolveOpenClawCustomProviderConfig(rootConfig, inherited, overrides = 
     baseUrl,
     model,
     logger: overrides.logger,
+    reasoning: normalizeReasoningConfig(provider.reasoning),
+    includeReasoning: normalizeOptionalBoolean(provider.includeReasoning ?? provider.include_reasoning),
     embeddingModel:
       asString(provider.embeddingModel) ||
       asString(provider.embedding_model) ||
@@ -2791,6 +2817,22 @@ function resolveProviderConfig(apiConfig, overrides = {}) {
       fileConfig.openai_embedding_model ||
       process.env.OPENCLAW_RP_OPENAI_EMBEDDING_MODEL ||
       process.env.OPENAI_EMBEDDING_MODEL,
+    reasoning:
+      normalizeReasoningConfig(pluginConfig.openai?.reasoning) ||
+      (String(
+        pluginConfig.openai?.baseUrl ||
+          pluginConfig.openai?.base_url ||
+          inherited.openai.baseUrl ||
+          fileConfig.openai_base_url ||
+          "",
+      ).includes("openrouter.ai")
+        ? { enabled: false }
+        : null),
+    includeReasoning: normalizeOptionalBoolean(
+      pluginConfig.openai?.includeReasoning ??
+        pluginConfig.openai?.include_reasoning ??
+        fileConfig.openai_include_reasoning,
+    ),
     chatTimeoutMs: toPositiveNumber(
       fileConfig.openai_chat_timeout_ms ||
         process.env.OPENCLAW_RP_OPENAI_CHAT_TIMEOUT_MS ||
@@ -3449,6 +3491,22 @@ export default {
       } catch (err) {
         const rpErr = asRPError(err);
         if (rpErr.code === RP_ERROR_CODES.MODEL_UNAVAILABLE) {
+          const providerMissing = /provider is not configured/i.test(asString(rpErr.message));
+          if (!providerMissing) {
+            const runtimeSummary = summarizeOwnedHarnessRuntimeAccess(params);
+            const pluginProviderSummary = summarizePluginOwnedProviderConfig(api?.config);
+            api.logger?.warn?.(
+              `[openclaw-rp] agent_harness.owned_generation model_failed session=${session.id} error=${JSON.stringify({
+                code: rpErr.code,
+                message: rpErr.message,
+              })} provider=${JSON.stringify(pluginProviderSummary)} runtime=${JSON.stringify(runtimeSummary)}`,
+            );
+            return buildAgentHarnessTextAttemptResult(
+              params,
+              `RP owned generation reached the configured provider, but generation failed: ${rpErr.message || "Model unavailable"}`,
+              { agentHarnessId: "openclaw-rp-owned-generation" },
+            );
+          }
           const refreshed = refreshPluginOwnedProviders("owned_generation_model_unavailable");
           if (refreshed?.modelProviderAvailable) {
             try {

@@ -140,6 +140,11 @@ export function createOpenAICompatibleProviders(config = {}) {
   const ttsVoice = config.ttsVoice || "alloy";
   const imageModel = config.imageModel || "gpt-image-1";
   const embeddingModel = config.embeddingModel || "text-embedding-3-small";
+  const reasoning = config.reasoning && typeof config.reasoning === "object" && !Array.isArray(config.reasoning)
+    ? config.reasoning
+    : null;
+  const includeReasoning =
+    typeof config.includeReasoning === "boolean" ? config.includeReasoning : undefined;
 
   return {
     modelProvider: {
@@ -151,6 +156,13 @@ export function createOpenAICompatibleProviders(config = {}) {
           top_p: modelConfig?.top_p,
           max_tokens: modelConfig?.max_tokens,
         };
+
+        if (reasoning) {
+          body.reasoning = reasoning;
+        }
+        if (includeReasoning !== undefined) {
+          body.include_reasoning = includeReasoning;
+        }
 
         if (Array.isArray(modelConfig?.stop_sequences) && modelConfig.stop_sequences.length > 0) {
           body.stop = modelConfig.stop_sequences;

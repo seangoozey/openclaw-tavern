@@ -97,6 +97,45 @@ test("openai-compatible model provider supports array content", async () => {
   }
 });
 
+test("openai-compatible model provider passes reasoning controls", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody = null;
+  globalThis.fetch = async (_url, init = {}) => {
+    requestBody = JSON.parse(String(init.body || "{}"));
+    return new Response(
+      JSON.stringify({
+        choices: [{ message: { content: "ok" } }],
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const providers = createOpenAICompatibleProviders({
+      apiKey: "test-key",
+      baseUrl: "https://openrouter.ai/api/v1",
+      model: "test-model",
+      reasoning: {
+        enabled: false,
+      },
+      includeReasoning: false,
+    });
+    const result = await providers.modelProvider.generate({
+      prompt: {
+        messages: [{ role: "user", content: "hi" }],
+      },
+    });
+    assert.equal(result.content, "ok");
+    assert.deepEqual(requestBody.reasoning, { enabled: false });
+    assert.equal(requestBody.include_reasoning, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("openai-compatible tts provider supports binary audio response", async () => {
   const originalFetch = global.fetch;
   global.fetch = async () => ({

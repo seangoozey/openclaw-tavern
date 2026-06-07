@@ -706,6 +706,124 @@ test("agent harness owned generation accepts plugin env SecretRef api key", asyn
   }
 });
 
+test("agent harness owned generation disables OpenRouter reasoning by default", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));
+  const commands = new Map();
+  const services = new Map();
+  const hooks = new Map();
+  const harnesses = new Map();
+  const cardPath = path.join(assetDir, "nina.json");
+  const originalFetch = globalThis.fetch;
+  let requestBody = null;
+  await writeFile(
+    cardPath,
+    JSON.stringify({
+      name: "Nina",
+      description: "Nina answers like a dry-humored night owl.",
+      first_mes: "still up?",
+    }),
+    "utf8",
+  );
+
+  globalThis.fetch = async (url, init = {}) => {
+    const rawUrl = String(url);
+    if (rawUrl.endsWith("/chat/completions")) {
+      requestBody = JSON.parse(String(init.body || "{}"));
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "reasoning disabled" } }],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    if (rawUrl.endsWith("/embeddings")) {
+      return new Response(JSON.stringify({ data: [{ embedding: Array.from({ length: 16 }, () => 0.1) }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected fetch ${rawUrl}`);
+  };
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        services,
+        hooks,
+        harnesses,
+        config: {
+          env: {
+            OPENROUTER_RP_API_KEY: "test-key",
+          },
+          plugins: {
+            entries: {
+              "openclaw-rp-plugin": {
+                config: {
+                  provider: "openai",
+                  openai: {
+                    apiKey: "${OPENROUTER_RP_API_KEY}",
+                    baseUrl: "https://openrouter.ai/api/v1",
+                    model: "z-ai/glm-4.7-flash",
+                  },
+                  agentHarness: {
+                    ownedGeneration: true,
+                    runAttemptProvider: "openrouter",
+                    runAttemptModel: "z-ai/glm-4.7-flash",
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+    const harness = harnesses.get("openclaw-rp-owned-generation");
+    const rp = commands.get("rp");
+    const baseCtx = {
+      channel: "telegram",
+      channelId: "telegram",
+      conversationId: "555",
+      senderId: "555",
+      from: "555",
+      commandBody: "",
+      sessionKey: "agent:rp:telegram:direct:555",
+    };
+    let result = await rp.handler({ ...baseCtx, commandBody: `/rp import-card --file "${cardPath}"` });
+    assert.equal(result.isError, undefined);
+    result = await rp.handler({ ...baseCtx, commandBody: "/rp start --card Nina" });
+    assert.equal(result.isError, undefined);
+
+    await harness.runAttempt({
+      sessionId: "openclaw-session-1",
+      sessionKey: "agent:rp:telegram:direct:555",
+      sandboxSessionKey: "agent:rp:telegram:direct:555",
+      messageProvider: "telegram",
+      messageTo: "telegram:555",
+      currentChannelId: "telegram:555",
+      senderId: "555",
+      agentId: "rp",
+      provider: "openrouter",
+      modelId: "z-ai/glm-4.7-flash",
+      transcriptPrompt: "you awake?",
+      prompt: { messages: [{ role: "user", content: "you awake?" }] },
+      initialReplayState: { replayInvalid: false, hadPotentialSideEffects: false },
+    });
+
+    assert.deepEqual(requestBody.reasoning, { enabled: false });
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    globalThis.fetch = originalFetch;
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(assetDir, { recursive: true, force: true });
+  }
+});
+
 test("agent harness owned generation returns controlled message when plugin model provider is unavailable", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
   const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));
