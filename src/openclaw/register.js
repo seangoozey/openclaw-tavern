@@ -3207,6 +3207,40 @@ export default {
       };
     }
 
+    function summarizeOwnedHarnessRuntimeAccess(params = {}) {
+      const handle = isObject(params.runtimePlan?.providerRuntimeHandle)
+        ? params.runtimePlan.providerRuntimeHandle
+        : {};
+      const auth = isObject(params.runtimePlan?.auth) ? params.runtimePlan.auth : {};
+      const observability = isObject(params.runtimePlan?.observability)
+        ? params.runtimePlan.observability
+        : {};
+      const authStorage = isObject(params.authStorage) ? params.authStorage : {};
+      const authProfileStore = isObject(params.authProfileStore) ? params.authProfileStore : {};
+      const providerRequestConfigs = isObject(params.modelRegistry?.providerRequestConfigs)
+        ? params.modelRegistry.providerRequestConfigs
+        : {};
+      const modelRequestHeaders = isObject(params.modelRegistry?.modelRequestHeaders)
+        ? params.modelRegistry.modelRequestHeaders
+        : {};
+      return {
+        hasResolvedApiKey: Boolean(asString(params.resolvedApiKey)),
+        providerRuntimeHandleKeys: Object.keys(handle).sort(),
+        providerRuntimeHandleProvider: asString(handle.provider),
+        providerRuntimeHandleConfigKeys: isObject(handle.config) ? Object.keys(handle.config).sort() : [],
+        providerRuntimeHandleHasEnv: isObject(handle.env),
+        authKeys: Object.keys(auth).sort(),
+        authProfileId: asString(params.authProfileId),
+        authProfileIdSource: asString(params.authProfileIdSource),
+        authStorageKeys: Object.keys(authStorage).sort(),
+        authStorageDataKeys: isObject(authStorage.data) ? Object.keys(authStorage.data).sort() : [],
+        authProfileStoreProfileKeys: isObject(authProfileStore.profiles) ? Object.keys(authProfileStore.profiles).sort() : [],
+        modelRegistryProviderRequestConfigKeys: Object.keys(providerRequestConfigs).sort(),
+        modelRegistryModelRequestHeaderKeys: Object.keys(modelRequestHeaders).sort(),
+        observability,
+      };
+    }
+
     function buildHarnessRouterContext(params = {}) {
       const rawChannelType =
         asString(params.messageProvider) ||
@@ -3323,12 +3357,29 @@ export default {
         );
       }
 
-      const handled = await sessionManager.processDialogue({
-        channelSessionKey: session.channel_session_key || channelSessionKey,
-        userId: session.user_id,
-        content,
-        userTurnAlreadyStored: Boolean(storedUserTurn),
-      });
+      let handled = null;
+      try {
+        handled = await sessionManager.processDialogue({
+          channelSessionKey: session.channel_session_key || channelSessionKey,
+          userId: session.user_id,
+          content,
+          userTurnAlreadyStored: Boolean(storedUserTurn),
+        });
+      } catch (err) {
+        const rpErr = asRPError(err);
+        if (rpErr.code === RP_ERROR_CODES.MODEL_UNAVAILABLE) {
+          const runtimeSummary = summarizeOwnedHarnessRuntimeAccess(params);
+          api.logger?.warn?.(
+            `[openclaw-rp] agent_harness.owned_generation model_unavailable session=${session.id} runtime=${JSON.stringify(runtimeSummary)}`,
+          );
+          return buildAgentHarnessTextAttemptResult(
+            params,
+            "RP owned generation reached the active session, but the plugin model provider is not configured. Configure a plugin-owned provider/API key or keep agentHarness.ownedGeneration disabled until OpenClaw runtime auth reuse is implemented.",
+            { agentHarnessId: "openclaw-rp-owned-generation" },
+          );
+        }
+        throw err;
+      }
       const text = formatDialogueHandledText(handled);
       if (!text) {
         api.logger?.info?.(`[openclaw-rp] agent_harness.owned_generation no_visible_reply session=${session.id}`);
@@ -3422,7 +3473,7 @@ export default {
       }
       api.registerAgentHarness({
         id: harnessId,
-        label: "OpenClaw RP diagnostic harness",
+        label: ownedGeneration ? "OpenClaw RP owned generation harness" : "OpenClaw RP diagnostic harness",
         supports(ctx = {}) {
           const summary = summarizeAgentHarnessValue(ctx);
           const match = agentHarnessRunAttemptMatches(ctx);
@@ -3448,7 +3499,7 @@ export default {
         },
         async runAttempt(params = {}) {
           const summary = summarizeAgentHarnessValue(params);
-          api.logger?.warn?.(`[openclaw-rp] agent_harness.runAttempt diagnostic ${JSON.stringify(summary)}`);
+          api.logger?.warn?.(`[openclaw-rp] agent_harness.runAttempt ${runAttemptDiagnostics ? "diagnostic" : ownedGeneration ? "owned_generation" : "diagnostic"} ${JSON.stringify(summary)}`);
           if (runAttemptDiagnostics) {
             return buildAgentHarnessTextAttemptResult(
               params,

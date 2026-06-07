@@ -561,6 +561,136 @@ test("agent harness owned generation routes active RP session through session ma
   }
 });
 
+test("agent harness owned generation returns controlled message when plugin model provider is unavailable", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));
+  const commands = new Map();
+  const services = new Map();
+  const hooks = new Map();
+  const harnesses = new Map();
+  const warnings = [];
+  const cardPath = path.join(assetDir, "nina.json");
+  await writeFile(
+    cardPath,
+    JSON.stringify({
+      name: "Nina",
+      description: "Nina answers like a dry-humored night owl.",
+      first_mes: "still up?",
+    }),
+    "utf8",
+  );
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        services,
+        hooks,
+        harnesses,
+        logger: {
+          info() {},
+          warn(message) {
+            warnings.push(String(message || ""));
+          },
+        },
+        config: {
+          plugins: {
+            entries: {
+              "openclaw-rp-plugin": {
+                config: {
+                  agentHarness: {
+                    ownedGeneration: true,
+                    runAttemptProvider: "openrouter",
+                    runAttemptModel: "z-ai/glm-4.7-flash",
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const harness = harnesses.get("openclaw-rp-owned-generation");
+    assert.ok(harness);
+    const rp = commands.get("rp");
+    const baseCtx = {
+      channel: "telegram",
+      channelId: "telegram",
+      conversationId: "555",
+      senderId: "555",
+      from: "555",
+      commandBody: "",
+      sessionKey: "agent:rp:telegram:direct:555",
+    };
+    let result = await rp.handler({
+      ...baseCtx,
+      commandBody: `/rp import-card --file "${cardPath}"`,
+    });
+    assert.equal(result.isError, undefined);
+    result = await rp.handler({
+      ...baseCtx,
+      commandBody: "/rp start --card Nina",
+    });
+    assert.equal(result.isError, undefined);
+
+    const payload = await harness.runAttempt({
+      sessionId: "openclaw-session-1",
+      sessionKey: "agent:rp:telegram:direct:555",
+      sandboxSessionKey: "agent:rp:telegram:direct:555",
+      messageProvider: "telegram",
+      messageTo: "telegram:555",
+      currentChannelId: "telegram:555",
+      senderId: "555",
+      agentId: "rp",
+      provider: "openrouter",
+      modelId: "z-ai/glm-4.7-flash",
+      transcriptPrompt: "you awake?",
+      runtimePlan: {
+        providerRuntimeHandle: {
+          provider: "openrouter",
+          config: {
+            baseUrl: "https://openrouter.ai/api/v1",
+          },
+        },
+        auth: {
+          providerForAuth: "openrouter",
+        },
+        observability: {
+          provider: "openrouter",
+          modelId: "z-ai/glm-4.7-flash",
+        },
+      },
+      authStorage: {
+        data: {},
+      },
+      authProfileStore: {
+        profiles: {},
+      },
+      modelRegistry: {
+        providerRequestConfigs: {},
+        modelRequestHeaders: {},
+      },
+      prompt: {
+        messages: [{ role: "user", content: "you awake?" }],
+      },
+      initialReplayState: {
+        replayInvalid: false,
+        hadPotentialSideEffects: false,
+      },
+    });
+
+    assert.equal(payload.agentHarnessId, "openclaw-rp-owned-generation");
+    assert.match(payload.assistantTexts[0], /plugin model provider is not configured/);
+    assert.equal(warnings.some((item) => item.includes("agent_harness.owned_generation model_unavailable")), true);
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(assetDir, { recursive: true, force: true });
+  }
+});
+
 test("/rp init manages host IDENTITY.md and SOUL.md blocks", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-workspace-"));
