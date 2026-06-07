@@ -355,15 +355,24 @@ test("agent harness runAttempt diagnostics claims matching provider and returns 
     assert.equal(supported.reason, "run_attempt_diagnostic");
 
     const payload = await harness.runAttempt({
+      sessionId: "session_harness",
+      sessionFile: "/tmp/session_harness.jsonl",
       provider: "openrouter",
       modelId: "z-ai/glm-4.7-flash",
+      initialReplayState: {
+        replayInvalid: false,
+        hadPotentialSideEffects: false,
+      },
       prompt: {
         messages: [{ role: "user", content: "hello" }],
       },
     });
-    assert.equal(payload.handled, true);
-    assert.equal(payload.claimed, true);
-    assert.match(payload.content, /harness runAttempt diagnostic intercepted/);
+    assert.equal(payload.aborted, false);
+    assert.equal(payload.promptErrorSource, null);
+    assert.equal(payload.sessionIdUsed, "session_harness");
+    assert.deepEqual(payload.assistantTexts, ["[OpenClaw RP harness runAttempt diagnostic intercepted this turn.]"]);
+    assert.match(payload.lastAssistant.content, /harness runAttempt diagnostic intercepted/);
+    assert.equal(payload.replayMetadata.replaySafe, true);
     assert.equal(warnLogs.some((item) => item.includes("agent_harness.runAttempt diagnostic")), true);
 
     const rp = commands.get("rp");

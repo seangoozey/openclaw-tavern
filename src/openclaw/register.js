@@ -3201,29 +3201,55 @@ export default {
       };
     }
 
-    function buildAgentHarnessDiagnosticResponse(params = {}) {
+    function buildAgentHarnessDiagnosticAttemptResult(params = {}) {
       const text = "[OpenClaw RP harness runAttempt diagnostic intercepted this turn.]";
-      return {
-        handled: true,
-        claimed: true,
+      const lastAssistant = {
+        role: "assistant",
         content: text,
         text,
-        output: text,
-        message: {
-          role: "assistant",
-          content: text,
-          text,
+        stopReason: "completed",
+      };
+      const initialReplayState = isObject(params.initialReplayState) ? params.initialReplayState : {};
+      const replaySafe =
+        initialReplayState.replayInvalid !== true && initialReplayState.hadPotentialSideEffects !== true;
+      return {
+        aborted: false,
+        externalAbort: false,
+        timedOut: false,
+        idleTimedOut: false,
+        timedOutDuringCompaction: false,
+        timedOutDuringToolExecution: false,
+        promptError: undefined,
+        promptErrorSource: null,
+        sessionIdUsed: asString(params.sessionId) || asString(params.sessionIdUsed) || "",
+        sessionFileUsed: asString(params.sessionFile) || asString(params.sessionFileUsed) || undefined,
+        agentHarnessId: "openclaw-rp-runattempt-diagnostic",
+        messagesSnapshot: Array.isArray(params.prompt?.messages) ? params.prompt.messages : [],
+        assistantTexts: [text],
+        toolMetas: [],
+        acceptedSessionSpawns: [],
+        lastAssistant,
+        currentAttemptAssistant: lastAssistant,
+        lastToolError: undefined,
+        didSendViaMessagingTool: false,
+        didDeliverSourceReplyViaMessageTool: false,
+        didSendDeterministicApprovalPrompt: false,
+        messagingToolSentTexts: [],
+        messagingToolSentMediaUrls: [],
+        messagingToolSentTargets: [],
+        messagingToolSourceReplyPayloads: [],
+        cloudCodeAssistFormatError: false,
+        attemptUsage: undefined,
+        replayMetadata: {
+          hadPotentialSideEffects: false,
+          replaySafe,
         },
-        response: {
-          role: "assistant",
-          content: text,
-          text,
+        itemLifecycle: {
+          startedCount: 1,
+          completedCount: 1,
+          activeCount: 0,
         },
-        diagnostic: {
-          plugin: OPENCLAW_RP_PLUGIN_ID,
-          mode: "agent_harness_run_attempt_diagnostics",
-          provider_model: extractAgentHarnessProviderModel(params),
-        },
+        setTerminalLifecycleMeta() {},
       };
     }
 
@@ -3276,7 +3302,7 @@ export default {
           const summary = summarizeAgentHarnessValue(params);
           api.logger?.warn?.(`[openclaw-rp] agent_harness.runAttempt diagnostic ${JSON.stringify(summary)}`);
           if (runAttemptDiagnostics) {
-            return buildAgentHarnessDiagnosticResponse(params);
+            return buildAgentHarnessDiagnosticAttemptResult(params);
           }
           throw new Error("OpenClaw RP diagnostic harness does not claim turns");
         },
