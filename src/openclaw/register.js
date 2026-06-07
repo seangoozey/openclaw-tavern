@@ -2316,6 +2316,10 @@ function isAgentHarnessRunAttemptDiagnosticsEnabled(api) {
   return getAgentHarnessConfig(api)?.runAttemptDiagnostics === true;
 }
 
+function isAgentHarnessOwnedGenerationEnabled(api) {
+  return getAgentHarnessConfig(api)?.ownedGeneration === true;
+}
+
 function pickConfigValue(source, paths) {
   const values = [];
   for (const pathTokens of paths) {
@@ -2846,6 +2850,7 @@ export default {
       const agentHarness = {
         configured: isAgentHarnessDiagnosticsEnabled(api),
         runAttemptDiagnostics: isAgentHarnessRunAttemptDiagnosticsEnabled(api),
+        ownedGeneration: isAgentHarnessOwnedGenerationEnabled(api),
         available: typeof api.registerAgentHarness === "function",
         registered: registeredAgentHarness,
       };
@@ -2896,6 +2901,7 @@ export default {
         `- conversation access: ${hasConversationHookAccess(api) ? "enabled" : "disabled"}`,
         `- agent_harness_diagnostics: configured=${agentHarness.configured ? "yes" : "no"} available=${agentHarness.available ? "yes" : "no"} registered=${agentHarness.registered ? "yes" : "no"}`,
         `- agent_harness_run_attempt_diagnostics: configured=${agentHarness.runAttemptDiagnostics ? "yes" : "no"} available=${agentHarness.available ? "yes" : "no"} registered=${agentHarness.registered ? "yes" : "no"}`,
+        `- agent_harness_owned_generation: configured=${agentHarness.ownedGeneration ? "yes" : "no"} available=${agentHarness.available ? "yes" : "no"} registered=${agentHarness.registered ? "yes" : "no"}`,
       ];
       for (const [name, status] of Object.entries(nativeHooks)) {
         lines.push(`- ${name}: configured=${status.configured ? "yes" : "no"} registered=${status.registered ? "yes" : "no"}`);
@@ -3201,12 +3207,149 @@ export default {
       };
     }
 
-    function buildAgentHarnessDiagnosticAttemptResult(params = {}) {
-      const text = "[OpenClaw RP harness runAttempt diagnostic intercepted this turn.]";
+    function buildHarnessRouterContext(params = {}) {
+      const rawChannelType =
+        asString(params.messageProvider) ||
+        asString(params.providerChannel) ||
+        asString(params.currentChannelId) ||
+        inferChannelTypeFromSessionKey(params.sessionKey || params.sandboxSessionKey);
+      const channelType = rawChannelType.includes(":")
+        ? rawChannelType.split(":")[0].toLowerCase()
+        : rawChannelType.toLowerCase() || inferChannelTypeFromSessionKey(params.sessionKey || params.sandboxSessionKey) || "unknown";
+      const platformContextId = stripChannelIdentityPrefix(
+        channelType,
+        asString(params.messageTo) ||
+          asString(params.currentChannelId) ||
+          asString(params.agentHarnessTaskRuntimeScope?.requesterSessionKey).split(":").pop() ||
+          channelType,
+      );
+      const userId = stripChannelIdentityPrefix(
+        channelType,
+        asString(params.senderId) || extractSenderId(platformContextId) || platformContextId,
+      );
+      return {
+        channelType,
+        platformContextId,
+        channelId: platformContextId,
+        userId,
+        senderName: asString(params.senderName),
+        content:
+          asString(params.transcriptPrompt) ||
+          asString(params.input?.content) ||
+          asString(params.message?.content),
+        attachments: [],
+        accountId: asString(params.agentAccountId),
+        to: asString(params.messageTo),
+        from: asString(params.senderId),
+        messageThreadId: asString(params.currentMessageId),
+        agentId: asString(params.agentId),
+        sessionKey: asString(params.sessionKey || params.sandboxSessionKey),
+        workspaceDir: asString(params.workspaceDir),
+      };
+    }
+
+    async function runOwnedHarnessRpGeneration(params = {}) {
+      await ensureInitialized();
+      const routerCtx = buildHarnessRouterContext(params);
+      const content = asString(routerCtx.content);
+      const channelSessionKey = buildChannelSessionKey(routerCtx);
+      let session = store?.getSessionByChannelKey?.(channelSessionKey) || null;
+      if (!session) {
+        session = resolveActiveSessionForPending(store, db, {
+          routerCtx,
+          peers: [
+            routerCtx.platformContextId,
+            routerCtx.channelId,
+            routerCtx.userId,
+            params.messageTo,
+            params.currentChannelId,
+          ].filter(Boolean),
+        });
+      }
+      if (!session) {
+        api.logger?.warn?.(
+          `[openclaw-rp] agent_harness.owned_generation no_active_session sessionKey=${asString(params.sessionKey)} channelSessionKey=${channelSessionKey}`,
+        );
+        return buildAgentHarnessTextAttemptResult(
+          params,
+          "No active RP session is available for this channel. Start one with /rp start, or disable agentHarness.ownedGeneration.",
+          { agentHarnessId: "openclaw-rp-owned-generation" },
+        );
+      }
+      const status = asString(session.status).toLowerCase();
+      if (status !== "active") {
+        api.logger?.info?.(`[openclaw-rp] agent_harness.owned_generation session ${session.id} status=${status}`);
+        return buildAgentHarnessTextAttemptResult(
+          params,
+          status === "paused" ? t("session_paused") : t("session_unavailable"),
+          { agentHarnessId: "openclaw-rp-owned-generation" },
+        );
+      }
+      if (!content) {
+        api.logger?.warn?.(`[openclaw-rp] agent_harness.owned_generation no_content session=${session.id}`);
+        return buildAgentHarnessTextAttemptResult(
+          params,
+          "No message content was available for the RP harness turn.",
+          { agentHarnessId: "openclaw-rp-owned-generation" },
+        );
+      }
+
+      const storedUserTurn = appendNativeUserTurnOnce({ store, sessionManager, session, content });
+      const rpContextPayload = {
+        at: Date.now(),
+        session,
+        routerCtx,
+        userContent: content,
+        autoMedia: null,
+      };
+      const channelKey = [
+        asString(routerCtx.channelType),
+        asString(routerCtx.platformContextId),
+      ].filter(Boolean).join(":").toLowerCase();
+      rememberRpContext(
+        activeRpContextByAgentSessionKey,
+        activeRpContextByChannel,
+        rpContextPayload,
+        channelKey,
+        asString(params.sessionKey || params.sandboxSessionKey),
+      );
+      if (asString(session.channel_session_key)) {
+        rememberRpContext(
+          activeRpContextByAgentSessionKey,
+          activeRpContextByChannel,
+          rpContextPayload,
+          asString(session.channel_session_key).toLowerCase(),
+          null,
+        );
+      }
+
+      const handled = await sessionManager.processDialogue({
+        channelSessionKey: session.channel_session_key || channelSessionKey,
+        userId: session.user_id,
+        content,
+        userTurnAlreadyStored: Boolean(storedUserTurn),
+      });
+      const text = formatDialogueHandledText(handled);
+      if (!text) {
+        api.logger?.info?.(`[openclaw-rp] agent_harness.owned_generation no_visible_reply session=${session.id}`);
+        return buildAgentHarnessTextAttemptResult(params, "NO_REPLY", {
+          agentHarnessId: "openclaw-rp-owned-generation",
+        });
+      }
+      api.logger?.info?.(
+        `[openclaw-rp] agent_harness.owned_generation replied session=${session.id} length=${text.length}`,
+      );
+      return buildAgentHarnessTextAttemptResult(params, text, {
+        agentHarnessId: "openclaw-rp-owned-generation",
+      });
+    }
+
+    function buildAgentHarnessTextAttemptResult(params = {}, text, options = {}) {
+      const content = asString(text) || "[OpenClaw RP harness produced an empty response.]";
       const lastAssistant = {
         role: "assistant",
-        content: text,
-        text,
+        content,
+        text: content,
         stopReason: "completed",
       };
       const initialReplayState = isObject(params.initialReplayState) ? params.initialReplayState : {};
@@ -3223,9 +3366,9 @@ export default {
         promptErrorSource: null,
         sessionIdUsed: asString(params.sessionId) || asString(params.sessionIdUsed) || "",
         sessionFileUsed: asString(params.sessionFile) || asString(params.sessionFileUsed) || undefined,
-        agentHarnessId: "openclaw-rp-runattempt-diagnostic",
+        agentHarnessId: asString(options.agentHarnessId) || "openclaw-rp-runattempt-diagnostic",
         messagesSnapshot: Array.isArray(params.prompt?.messages) ? params.prompt.messages : [],
-        assistantTexts: [text],
+        assistantTexts: [content],
         toolMetas: [],
         acceptedSessionSpawns: [],
         lastAssistant,
@@ -3256,20 +3399,25 @@ export default {
     function registerDiagnosticAgentHarness() {
       const supportsDiagnostics = isAgentHarnessDiagnosticsEnabled(api);
       const runAttemptDiagnostics = isAgentHarnessRunAttemptDiagnosticsEnabled(api);
-      if (!supportsDiagnostics && !runAttemptDiagnostics) {
+      const ownedGeneration = isAgentHarnessOwnedGenerationEnabled(api);
+      if (!supportsDiagnostics && !runAttemptDiagnostics && !ownedGeneration) {
         return;
       }
       if (typeof api.registerAgentHarness !== "function") {
         api.logger?.warn?.("[openclaw-rp] agent harness diagnostics requested but api.registerAgentHarness is unavailable");
         return;
       }
-      const harnessId = runAttemptDiagnostics ? "openclaw-rp-runattempt-diagnostic" : "openclaw-rp-diagnostic";
-      if (runAttemptDiagnostics) {
+      const harnessId = runAttemptDiagnostics
+        ? "openclaw-rp-runattempt-diagnostic"
+        : ownedGeneration
+          ? "openclaw-rp-owned-generation"
+          : "openclaw-rp-diagnostic";
+      if (runAttemptDiagnostics || ownedGeneration) {
         const config = getAgentHarnessConfig(api);
         const providerFilter = asString(config.runAttemptProvider) || "<any>";
         const modelFilter = asString(config.runAttemptModel) || "<any>";
         api.logger?.warn?.(
-          `[openclaw-rp] registering UNSAFE agent harness runAttempt diagnostic provider=${providerFilter} model=${modelFilter}`,
+          `[openclaw-rp] registering UNSAFE agent harness ${runAttemptDiagnostics ? "runAttempt diagnostic" : "owned generation"} provider=${providerFilter} model=${modelFilter}`,
         );
       }
       api.registerAgentHarness({
@@ -3279,30 +3427,37 @@ export default {
           const summary = summarizeAgentHarnessValue(ctx);
           const match = agentHarnessRunAttemptMatches(ctx);
           api.logger?.info?.(`[openclaw-rp] agent_harness.supports diagnostic ${JSON.stringify(summary)}`);
-          if (runAttemptDiagnostics && match.matches) {
+          if ((runAttemptDiagnostics || ownedGeneration) && match.matches) {
             api.logger?.warn?.(
-              `[openclaw-rp] agent_harness.supports runAttempt diagnostic claiming ${JSON.stringify(match)}`,
+              `[openclaw-rp] agent_harness.supports ${runAttemptDiagnostics ? "runAttempt diagnostic" : "owned generation"} claiming ${JSON.stringify(match)}`,
             );
             return {
               supported: true,
-              reason: match.reason,
+              reason: runAttemptDiagnostics ? match.reason : "owned_generation",
             };
           }
-          if (runAttemptDiagnostics) {
+          if (runAttemptDiagnostics || ownedGeneration) {
             api.logger?.info?.(
-              `[openclaw-rp] agent_harness.supports runAttempt diagnostic skipped ${JSON.stringify(match)}`,
+              `[openclaw-rp] agent_harness.supports ${runAttemptDiagnostics ? "runAttempt diagnostic" : "owned generation"} skipped ${JSON.stringify(match)}`,
             );
           }
           return {
             supported: false,
-            reason: runAttemptDiagnostics ? match.reason : "diagnostic_only",
+            reason: runAttemptDiagnostics || ownedGeneration ? match.reason : "diagnostic_only",
           };
         },
         async runAttempt(params = {}) {
           const summary = summarizeAgentHarnessValue(params);
           api.logger?.warn?.(`[openclaw-rp] agent_harness.runAttempt diagnostic ${JSON.stringify(summary)}`);
           if (runAttemptDiagnostics) {
-            return buildAgentHarnessDiagnosticAttemptResult(params);
+            return buildAgentHarnessTextAttemptResult(
+              params,
+              "[OpenClaw RP harness runAttempt diagnostic intercepted this turn.]",
+              { agentHarnessId: "openclaw-rp-runattempt-diagnostic" },
+            );
+          }
+          if (ownedGeneration) {
+            return runOwnedHarnessRpGeneration(params);
           }
           throw new Error("OpenClaw RP diagnostic harness does not claim turns");
         },

@@ -123,6 +123,12 @@ export const openclawRpPluginConfigSchema = {
           description:
             "Unsafe opt-in diagnostic mode that claims matching harness turns, logs sanitized runAttempt parameter shape, and returns a controlled diagnostic response.",
         },
+        ownedGeneration: {
+          type: "boolean",
+          default: false,
+          description:
+            "Unsafe opt-in mode that claims matching harness turns and routes active RP sessions through plugin-owned RP generation.",
+        },
         runAttemptProvider: {
           type: "string",
           minLength: 1,

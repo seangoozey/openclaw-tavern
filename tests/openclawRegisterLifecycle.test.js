@@ -385,6 +385,182 @@ test("agent harness runAttempt diagnostics claims matching provider and returns 
   }
 });
 
+test("agent harness owned generation routes active RP session through session manager", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));
+  const commands = new Map();
+  const services = new Map();
+  const hooks = new Map();
+  const harnesses = new Map();
+  const cardPath = path.join(assetDir, "nina.json");
+  const originalFetch = globalThis.fetch;
+  let chatCalls = 0;
+  await writeFile(
+    cardPath,
+    JSON.stringify({
+      name: "Nina",
+      description: "Nina answers like a dry-humored night owl.",
+      first_mes: "still up?",
+    }),
+    "utf8",
+  );
+
+  globalThis.fetch = async (url) => {
+    const rawUrl = String(url);
+    if (rawUrl.endsWith("/chat/completions")) {
+      chatCalls += 1;
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "barely. what's up?" } }],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    if (rawUrl.endsWith("/embeddings")) {
+      return new Response(
+        JSON.stringify({
+          data: [{ embedding: Array.from({ length: 16 }, () => 0.1) }],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    throw new Error(`unexpected fetch ${rawUrl}`);
+  };
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        services,
+        hooks,
+        harnesses,
+        logger: {
+          info() {},
+          warn() {},
+        },
+        config: {
+          env: {
+            RP_HARNESS_TEST_KEY: "test-key",
+          },
+          agents: {
+            defaults: {
+              model: {
+                primary: "rp-harness-test/test-chat",
+              },
+            },
+          },
+          models: {
+            providers: {
+              "rp-harness-test": {
+                api: "openai-completions",
+                apiKey: "${RP_HARNESS_TEST_KEY}",
+                baseUrl: "https://rp-harness-test.invalid/v1",
+                models: [
+                  {
+                    id: "test-chat",
+                    name: "Test Chat",
+                  },
+                ],
+              },
+            },
+          },
+          plugins: {
+            entries: {
+              "openclaw-rp-plugin": {
+                config: {
+                  agentHarness: {
+                    ownedGeneration: true,
+                    runAttemptProvider: "rp-harness-test",
+                    runAttemptModel: "test-chat",
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const harness = harnesses.get("openclaw-rp-owned-generation");
+    assert.ok(harness);
+    const supported = harness.supports({
+      provider: "rp-harness-test",
+      modelId: "test-chat",
+    });
+    assert.equal(supported.supported, true);
+    assert.equal(supported.reason, "owned_generation");
+
+    const rp = commands.get("rp");
+    const baseCtx = {
+      channel: "telegram",
+      channelId: "telegram",
+      conversationId: "555",
+      senderId: "555",
+      from: "555",
+      commandBody: "",
+      sessionKey: "agent:rp:telegram:direct:555",
+    };
+    let result = await rp.handler({
+      ...baseCtx,
+      commandBody: `/rp import-card --file "${cardPath}"`,
+    });
+    assert.equal(result.isError, undefined);
+    result = await rp.handler({
+      ...baseCtx,
+      commandBody: "/rp start --card Nina",
+    });
+    assert.equal(result.isError, undefined);
+
+    const payload = await harness.runAttempt({
+      sessionId: "openclaw-session-1",
+      sessionKey: "agent:rp:telegram:direct:555",
+      sandboxSessionKey: "agent:rp:telegram:direct:555",
+      messageProvider: "telegram",
+      messageTo: "telegram:555",
+      currentChannelId: "telegram:555",
+      currentMessageId: "msg-1",
+      senderId: "555",
+      senderName: "Tester",
+      agentId: "rp",
+      workspaceDir: stateDir,
+      provider: "rp-harness-test",
+      modelId: "test-chat",
+      transcriptPrompt: "you awake?",
+      prompt: {
+        messages: [{ role: "user", content: "you awake?" }],
+      },
+      initialReplayState: {
+        replayInvalid: false,
+        hadPotentialSideEffects: false,
+      },
+    });
+    assert.equal(payload.agentHarnessId, "openclaw-rp-owned-generation");
+    assert.equal(payload.assistantTexts[0], "barely. what's up?");
+    assert.equal(chatCalls, 1);
+
+    result = await rp.handler({
+      ...baseCtx,
+      commandBody: "/rp session",
+    });
+    assert.match(result.text, /turns: 3/);
+
+    result = await rp.handler({ ...baseCtx, commandBody: "/rp hooks-status" });
+    assert.match(result.text, /agent_harness_owned_generation: configured=yes available=yes registered=yes/);
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    globalThis.fetch = originalFetch;
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(assetDir, { recursive: true, force: true });
+  }
+});
+
 test("/rp init manages host IDENTITY.md and SOUL.md blocks", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-workspace-"));
