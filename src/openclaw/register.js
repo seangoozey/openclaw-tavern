@@ -2557,6 +2557,7 @@ function resolveOpenClawCustomProviderConfig(rootConfig, inherited, overrides = 
     apiKey,
     baseUrl,
     model,
+    logger: overrides.logger,
     embeddingModel:
       asString(provider.embeddingModel) ||
       asString(provider.embedding_model) ||
@@ -2759,6 +2760,7 @@ function resolveProviderConfig(apiConfig, overrides = {}) {
 
   return createOpenAICompatibleProviders({
     apiKey: openaiApiKey,
+    logger: overrides.logger,
     baseUrl:
       inherited.openai.baseUrl ||
       fileConfig.openai_base_url ||
@@ -3004,6 +3006,7 @@ export default {
         ? resolveProviderConfig(api?.config, {
             provider: nextConfig.provider,
             imageModel: nextConfig.imageModel,
+            logger: api.logger,
           })
         : {};
       return nextConfig;
@@ -3068,7 +3071,7 @@ export default {
         api.logger?.warn?.("[openclaw-rp] vector extension configured but unavailable; using JS cosine fallback");
       }
 
-      const providers = resolveProviderConfig(api?.config);
+      const providers = resolveProviderConfig(api?.config, { logger: api.logger });
       if (isAgentHarnessOwnedGenerationEnabled(api)) {
         api.logger?.info?.(
           `[openclaw-rp] plugin-owned provider resolution ${JSON.stringify({
@@ -3083,6 +3086,7 @@ export default {
         ? resolveProviderConfig(api?.config, {
             provider: agentImageToolConfig.provider,
             imageModel: agentImageToolConfig.imageModel,
+            logger: api.logger,
           })
         : {};
       const plugin = createRPPlugin({
@@ -3108,7 +3112,7 @@ export default {
       if (!router || !sessionManager) {
         return null;
       }
-      const providers = resolveProviderConfig(api?.config);
+      const providers = resolveProviderConfig(api?.config, { logger: api.logger });
       if (providers?.modelProvider?.generate) {
         sessionManager.modelProvider = providers.modelProvider;
         router.modelProvider = providers.modelProvider;
@@ -3447,12 +3451,29 @@ export default {
         if (rpErr.code === RP_ERROR_CODES.MODEL_UNAVAILABLE) {
           const refreshed = refreshPluginOwnedProviders("owned_generation_model_unavailable");
           if (refreshed?.modelProviderAvailable) {
-            handled = await sessionManager.processDialogue({
-              channelSessionKey: session.channel_session_key || channelSessionKey,
-              userId: session.user_id,
-              content,
-              userTurnAlreadyStored: true,
-            });
+            try {
+              handled = await sessionManager.processDialogue({
+                channelSessionKey: session.channel_session_key || channelSessionKey,
+                userId: session.user_id,
+                content,
+                userTurnAlreadyStored: true,
+              });
+            } catch (retryErr) {
+              const retryRpErr = asRPError(retryErr);
+              const runtimeSummary = summarizeOwnedHarnessRuntimeAccess(params);
+              const pluginProviderSummary = summarizePluginOwnedProviderConfig(api?.config);
+              api.logger?.warn?.(
+                `[openclaw-rp] agent_harness.owned_generation model_unavailable_after_refresh session=${session.id} error=${JSON.stringify({
+                  code: retryRpErr.code,
+                  message: retryRpErr.message,
+                })} provider=${JSON.stringify(pluginProviderSummary)} runtime=${JSON.stringify(runtimeSummary)}`,
+              );
+              return buildAgentHarnessTextAttemptResult(
+                params,
+                `RP owned generation reached the configured provider, but generation failed: ${retryRpErr.message || "Model unavailable"}`,
+                { agentHarnessId: "openclaw-rp-owned-generation" },
+              );
+            }
           } else {
           const runtimeSummary = summarizeOwnedHarnessRuntimeAccess(params);
           const pluginProviderSummary = summarizePluginOwnedProviderConfig(api?.config);

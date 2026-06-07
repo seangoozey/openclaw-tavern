@@ -92,6 +92,22 @@ function contentToText(content) {
   return "";
 }
 
+function summarizeChatCompletionShape(json) {
+  const choice = Array.isArray(json?.choices) ? json.choices[0] : null;
+  const message = choice?.message && typeof choice.message === "object" ? choice.message : null;
+  return {
+    choices: Array.isArray(json?.choices) ? json.choices.length : 0,
+    finish_reason: choice?.finish_reason || choice?.finishReason || "",
+    message_keys: message ? Object.keys(message).sort() : [],
+    content_type: Array.isArray(message?.content) ? "array" : typeof message?.content,
+    content_length: typeof message?.content === "string" ? message.content.length : 0,
+    has_reasoning: Boolean(message?.reasoning || message?.reasoning_content),
+    has_refusal: Boolean(message?.refusal),
+    has_tool_calls: Array.isArray(message?.tool_calls) && message.tool_calls.length > 0,
+    usage_keys: json?.usage && typeof json.usage === "object" ? Object.keys(json.usage).sort() : [],
+  };
+}
+
 function summaryPrompt({ summaryStyle, name, personality, previousSummary, conversation }) {
   return [
     {
@@ -146,9 +162,15 @@ export function createOpenAICompatibleProviders(config = {}) {
           timeoutMs: config.chatTimeoutMs || 30000,
         });
         const json = await readJsonResponse(response);
+        const content = contentToText(json?.choices?.[0]?.message?.content);
+        if (!content) {
+          config.logger?.warn?.(
+            `[openclaw-rp] openai-compatible chat returned empty content ${JSON.stringify(summarizeChatCompletionShape(json))}`,
+          );
+        }
 
         return {
-          content: contentToText(json?.choices?.[0]?.message?.content),
+          content,
           raw: json,
         };
       },
