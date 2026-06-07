@@ -2147,6 +2147,14 @@ function firstNonEmptyValue(values) {
 }
 
 function resolveConfigString(value, rootConfig = {}) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const source = asString(value.source).toLowerCase();
+    const id = asString(value.id);
+    if (source === "env" && id) {
+      return process.env[id] || rootConfig?.env?.[id] || "";
+    }
+    return "";
+  }
   if (typeof value !== "string") {
     return value;
   }
@@ -2554,6 +2562,8 @@ function resolveProviderConfig(apiConfig, overrides = {}) {
   const forcedProvider = normalizeProviderHint(overrides.provider);
   const explicitProvider = normalizeProviderHint(
     firstNonEmptyValue([
+      pluginConfig.provider,
+      pluginConfig.llm_provider,
       fileConfig.provider,
       fileConfig.llm_provider,
       process.env.OPENCLAW_RP_PROVIDER,
@@ -2562,14 +2572,18 @@ function resolveProviderConfig(apiConfig, overrides = {}) {
   const selectedProvider =
     forcedProvider && forcedProvider !== "inherit"
       ? forcedProvider
-      : inherited.providerHint || explicitProvider;
+      : explicitProvider && explicitProvider !== "inherit"
+        ? explicitProvider
+        : inherited.providerHint;
 
   const geminiApiKey =
+    resolveConfigString(pluginConfig.gemini?.apiKey || pluginConfig.gemini?.api_key, rootConfig) ||
     resolveConfigString(inherited.gemini.apiKey, rootConfig) ||
     resolveConfigString(fileConfig.gemini_api_key, rootConfig) ||
     process.env.OPENCLAW_RP_GEMINI_API_KEY ||
     process.env.GEMINI_API_KEY;
   const openaiApiKey =
+    resolveConfigString(pluginConfig.openai?.apiKey || pluginConfig.openai?.api_key, rootConfig) ||
     resolveConfigString(inherited.openai.apiKey, rootConfig) ||
     resolveConfigString(fileConfig.openai_api_key, rootConfig) ||
     process.env.OPENCLAW_RP_OPENAI_API_KEY ||

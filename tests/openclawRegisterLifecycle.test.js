@@ -561,6 +561,151 @@ test("agent harness owned generation routes active RP session through session ma
   }
 });
 
+test("agent harness owned generation accepts plugin env SecretRef api key", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));
+  const commands = new Map();
+  const services = new Map();
+  const hooks = new Map();
+  const harnesses = new Map();
+  const cardPath = path.join(assetDir, "nina.json");
+  const originalFetch = globalThis.fetch;
+  const originalEnv = process.env.OPENCLAW_RP_TEST_OPENROUTER_KEY;
+  let authorization = "";
+  await writeFile(
+    cardPath,
+    JSON.stringify({
+      name: "Nina",
+      description: "Nina answers like a dry-humored night owl.",
+      first_mes: "still up?",
+    }),
+    "utf8",
+  );
+  process.env.OPENCLAW_RP_TEST_OPENROUTER_KEY = "secret-ref-test-key";
+
+  globalThis.fetch = async (url, init = {}) => {
+    const rawUrl = String(url);
+    if (rawUrl.endsWith("/chat/completions")) {
+      authorization = String(init?.headers?.Authorization || init?.headers?.authorization || "");
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "env ref works" } }],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    if (rawUrl.endsWith("/embeddings")) {
+      return new Response(
+        JSON.stringify({
+          data: [{ embedding: Array.from({ length: 16 }, () => 0.1) }],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    throw new Error(`unexpected fetch ${rawUrl}`);
+  };
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        services,
+        hooks,
+        harnesses,
+        config: {
+          plugins: {
+            entries: {
+              "openclaw-rp-plugin": {
+                config: {
+                  provider: "openai",
+                  openai: {
+                    apiKey: {
+                      source: "env",
+                      provider: "default",
+                      id: "OPENCLAW_RP_TEST_OPENROUTER_KEY",
+                    },
+                    baseUrl: "https://openrouter.invalid/v1",
+                    model: "z-ai/glm-4.7-flash",
+                  },
+                  agentHarness: {
+                    ownedGeneration: true,
+                    runAttemptProvider: "openrouter",
+                    runAttemptModel: "z-ai/glm-4.7-flash",
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const harness = harnesses.get("openclaw-rp-owned-generation");
+    assert.ok(harness);
+    const rp = commands.get("rp");
+    const baseCtx = {
+      channel: "telegram",
+      channelId: "telegram",
+      conversationId: "555",
+      senderId: "555",
+      from: "555",
+      commandBody: "",
+      sessionKey: "agent:rp:telegram:direct:555",
+    };
+    let result = await rp.handler({
+      ...baseCtx,
+      commandBody: `/rp import-card --file "${cardPath}"`,
+    });
+    assert.equal(result.isError, undefined);
+    result = await rp.handler({
+      ...baseCtx,
+      commandBody: "/rp start --card Nina",
+    });
+    assert.equal(result.isError, undefined);
+
+    const payload = await harness.runAttempt({
+      sessionId: "openclaw-session-1",
+      sessionKey: "agent:rp:telegram:direct:555",
+      sandboxSessionKey: "agent:rp:telegram:direct:555",
+      messageProvider: "telegram",
+      messageTo: "telegram:555",
+      currentChannelId: "telegram:555",
+      senderId: "555",
+      agentId: "rp",
+      provider: "openrouter",
+      modelId: "z-ai/glm-4.7-flash",
+      transcriptPrompt: "you awake?",
+      prompt: {
+        messages: [{ role: "user", content: "you awake?" }],
+      },
+      initialReplayState: {
+        replayInvalid: false,
+        hadPotentialSideEffects: false,
+      },
+    });
+
+    assert.equal(payload.assistantTexts[0], "env ref works");
+    assert.equal(authorization, "Bearer secret-ref-test-key");
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    globalThis.fetch = originalFetch;
+    if (originalEnv === undefined) {
+      delete process.env.OPENCLAW_RP_TEST_OPENROUTER_KEY;
+    } else {
+      process.env.OPENCLAW_RP_TEST_OPENROUTER_KEY = originalEnv;
+    }
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(assetDir, { recursive: true, force: true });
+  }
+});
+
 test("agent harness owned generation returns controlled message when plugin model provider is unavailable", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
   const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));

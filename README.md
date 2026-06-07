@@ -235,6 +235,33 @@ Add plugin config under your OpenClaw config:
 - `agentHarness.ownedGeneration`: unsafe opt-in RP harness mode. When `true`, the plugin claims matching harness selections and routes active RP sessions through plugin-owned RP generation. Because `supports()` cannot see active session state, use this only on a dedicated RP agent/model; non-RP turns on that model will not fall back to the host agent.
 - `agentHarness.runAttemptProvider` / `agentHarness.runAttemptModel`: optional filters for `runAttemptDiagnostics` and `ownedGeneration`. Set these to the RP agent's exact resolved provider/model so the harness does not claim unrelated model calls.
 
+For plugin-owned OpenRouter generation, use the OpenAI-compatible provider and an env SecretRef-style API key:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-rp-plugin": {
+        "config": {
+          "provider": "openai",
+          "openai": {
+            "apiKey": {
+              "source": "env",
+              "provider": "default",
+              "id": "OPENROUTER_RP_API_KEY"
+            },
+            "baseUrl": "https://openrouter.ai/api/v1",
+            "model": "z-ai/glm-4.7-flash"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+The plugin resolves `source: "env"` SecretRef-style objects from the container environment. File and exec SecretRef providers are not resolved by this plugin unless OpenClaw exposes a generic plugin secret-resolution API.
+
 To let an OpenClaw agent use it, also allow `rp_generate_image` in the agent tool config. On OpenClaw `2026.3.x`, the recommended config is:
 
 ```json
