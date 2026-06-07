@@ -209,7 +209,10 @@ Add plugin config under your OpenClaw config:
             "beforeAgentRun": false
           },
           "agentHarness": {
-            "diagnostics": false
+            "diagnostics": false,
+            "runAttemptDiagnostics": false,
+            "runAttemptProvider": "openrouter",
+            "runAttemptModel": "z-ai/glm-4.7-flash"
           }
         }
       }
@@ -227,6 +230,8 @@ Add plugin config under your OpenClaw config:
 - `nativeHooks.replyPayloadSending`: opt-in for OpenClaw builds that expose `reply_payload_sending`. Keep it `false` on `v2026.5.27-beta.1` if the container logs `unknown typed hook "reply_payload_sending"`.
 - `nativeHooks.inboundClaim`, `nativeHooks.beforeAgentReply`, `nativeHooks.beforeAgentRun`: opt-in candidates for plugin-owned RP turns. Enable one at a time in Docker to identify which hook exists in your OpenClaw build. When a supported hook fires during an active RP session, the plugin generates the RP reply directly and asks OpenClaw to block the normal agent run.
 - `agentHarness.diagnostics`: opt-in non-claiming harness probe. When `true`, the plugin logs sanitized `agent_harness.supports` context so you can inspect whether OpenClaw exposes the current agent/provider/model at harness-selection time.
+- `agentHarness.runAttemptDiagnostics`: unsafe opt-in harness probe. When `true`, the plugin claims matching harness selections, logs sanitized `runAttempt` parameter shape, and returns a controlled diagnostic response instead of a normal model reply. Use only on the dedicated RP agent while testing.
+- `agentHarness.runAttemptProvider` / `agentHarness.runAttemptModel`: optional filters for `runAttemptDiagnostics`. Set these to the RP agent's exact resolved provider/model so the diagnostic probe does not claim unrelated model calls.
 
 To let an OpenClaw agent use it, also allow `rp_generate_image` in the agent tool config. On OpenClaw `2026.3.x`, the recommended config is:
 

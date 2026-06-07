@@ -296,6 +296,86 @@ test("agent harness diagnostics registers a non-claiming harness when enabled", 
   }
 });
 
+test("agent harness runAttempt diagnostics claims matching provider and returns controlled payload", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const commands = new Map();
+  const services = new Map();
+  const hooks = new Map();
+  const harnesses = new Map();
+  const warnLogs = [];
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        services,
+        hooks,
+        harnesses,
+        logger: {
+          info() {},
+          warn(message) {
+            warnLogs.push(String(message || ""));
+          },
+        },
+        config: {
+          plugins: {
+            entries: {
+              "openclaw-rp-plugin": {
+                config: {
+                  agentHarness: {
+                    diagnostics: true,
+                    runAttemptDiagnostics: true,
+                    runAttemptProvider: "openrouter",
+                    runAttemptModel: "z-ai/glm-4.7-flash",
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const harness = harnesses.get("openclaw-rp-runattempt-diagnostic");
+    assert.ok(harness);
+    const skipped = harness.supports({
+      provider: "openai",
+      modelId: "gpt-5.5",
+    });
+    assert.equal(skipped.supported, false);
+    assert.equal(skipped.reason, "provider_mismatch");
+
+    const supported = harness.supports({
+      provider: "openrouter",
+      modelId: "z-ai/glm-4.7-flash",
+      requestedRuntime: "auto",
+    });
+    assert.equal(supported.supported, true);
+    assert.equal(supported.reason, "run_attempt_diagnostic");
+
+    const payload = await harness.runAttempt({
+      provider: "openrouter",
+      modelId: "z-ai/glm-4.7-flash",
+      prompt: {
+        messages: [{ role: "user", content: "hello" }],
+      },
+    });
+    assert.equal(payload.handled, true);
+    assert.equal(payload.claimed, true);
+    assert.match(payload.content, /harness runAttempt diagnostic intercepted/);
+    assert.equal(warnLogs.some((item) => item.includes("agent_harness.runAttempt diagnostic")), true);
+
+    const rp = commands.get("rp");
+    const result = await rp.handler({ commandBody: "/rp hooks-status" });
+    assert.equal(result.isError, undefined);
+    assert.match(result.text, /agent_harness_run_attempt_diagnostics: configured=yes available=yes registered=yes/);
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("/rp init manages host IDENTITY.md and SOUL.md blocks", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-workspace-"));

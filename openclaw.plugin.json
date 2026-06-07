@@ -110,6 +110,18 @@
           "diagnostics": {
             "type": "boolean",
             "default": false
+          },
+          "runAttemptDiagnostics": {
+            "type": "boolean",
+            "default": false
+          },
+          "runAttemptProvider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "runAttemptModel": {
+            "type": "string",
+            "minLength": 1
           }
         }
       }

@@ -2305,6 +2305,17 @@ function isAgentHarnessDiagnosticsEnabled(api) {
   return pluginConfig?.agentHarness?.diagnostics === true;
 }
 
+function getAgentHarnessConfig(api) {
+  const openclawConfig = loadOpenClawFileConfig();
+  const rootConfig = mergeConfigObjects(openclawConfig, api?.config);
+  const pluginConfig = getOpenClawRpPluginConfig(rootConfig);
+  return isObject(pluginConfig?.agentHarness) ? pluginConfig.agentHarness : {};
+}
+
+function isAgentHarnessRunAttemptDiagnosticsEnabled(api) {
+  return getAgentHarnessConfig(api)?.runAttemptDiagnostics === true;
+}
+
 function pickConfigValue(source, paths) {
   const values = [];
   for (const pathTokens of paths) {
@@ -2834,6 +2845,7 @@ export default {
     function buildHooksStatusResponse() {
       const agentHarness = {
         configured: isAgentHarnessDiagnosticsEnabled(api),
+        runAttemptDiagnostics: isAgentHarnessRunAttemptDiagnosticsEnabled(api),
         available: typeof api.registerAgentHarness === "function",
         registered: registeredAgentHarness,
       };
@@ -2883,6 +2895,7 @@ export default {
         "OpenClaw RP hook status",
         `- conversation access: ${hasConversationHookAccess(api) ? "enabled" : "disabled"}`,
         `- agent_harness_diagnostics: configured=${agentHarness.configured ? "yes" : "no"} available=${agentHarness.available ? "yes" : "no"} registered=${agentHarness.registered ? "yes" : "no"}`,
+        `- agent_harness_run_attempt_diagnostics: configured=${agentHarness.runAttemptDiagnostics ? "yes" : "no"} available=${agentHarness.available ? "yes" : "no"} registered=${agentHarness.registered ? "yes" : "no"}`,
       ];
       for (const [name, status] of Object.entries(nativeHooks)) {
         lines.push(`- ${name}: configured=${status.configured ? "yes" : "no"} registered=${status.registered ? "yes" : "no"}`);
@@ -3128,33 +3141,148 @@ export default {
       return String(value);
     }
 
+    function extractAgentHarnessProviderModel(value = {}) {
+      const provider = firstNonEmptyValue([
+        value.provider,
+        value.providerId,
+        value.provider_id,
+        value.runtimePlan?.provider,
+        value.runtimePlan?.providerId,
+        value.runtimePlan?.observability?.provider,
+        value.model?.provider,
+        value.modelProvider,
+      ]);
+      const model = firstNonEmptyValue([
+        value.modelId,
+        value.model_id,
+        typeof value.model === "string" ? value.model : "",
+        value.runtimePlan?.modelId,
+        value.runtimePlan?.model,
+        value.runtimePlan?.observability?.model,
+        value.runtimePlan?.observability?.modelId,
+        value.model?.id,
+        value.model?.name,
+      ]);
+      return {
+        provider: asString(provider).toLowerCase(),
+        model: asString(model),
+      };
+    }
+
+    function agentHarnessRunAttemptMatches(ctx = {}) {
+      const config = getAgentHarnessConfig(api);
+      const wantedProvider = asString(config.runAttemptProvider).toLowerCase();
+      const wantedModel = asString(config.runAttemptModel);
+      const actual = extractAgentHarnessProviderModel(ctx);
+      if (wantedProvider && actual.provider !== wantedProvider) {
+        return {
+          matches: false,
+          reason: "provider_mismatch",
+          actual,
+          wantedProvider,
+          wantedModel,
+        };
+      }
+      if (wantedModel && actual.model !== wantedModel) {
+        return {
+          matches: false,
+          reason: "model_mismatch",
+          actual,
+          wantedProvider,
+          wantedModel,
+        };
+      }
+      return {
+        matches: true,
+        reason: "run_attempt_diagnostic",
+        actual,
+        wantedProvider,
+        wantedModel,
+      };
+    }
+
+    function buildAgentHarnessDiagnosticResponse(params = {}) {
+      const text = "[OpenClaw RP harness runAttempt diagnostic intercepted this turn.]";
+      return {
+        handled: true,
+        claimed: true,
+        content: text,
+        text,
+        output: text,
+        message: {
+          role: "assistant",
+          content: text,
+          text,
+        },
+        response: {
+          role: "assistant",
+          content: text,
+          text,
+        },
+        diagnostic: {
+          plugin: OPENCLAW_RP_PLUGIN_ID,
+          mode: "agent_harness_run_attempt_diagnostics",
+          provider_model: extractAgentHarnessProviderModel(params),
+        },
+      };
+    }
+
     function registerDiagnosticAgentHarness() {
-      if (!isAgentHarnessDiagnosticsEnabled(api)) {
+      const supportsDiagnostics = isAgentHarnessDiagnosticsEnabled(api);
+      const runAttemptDiagnostics = isAgentHarnessRunAttemptDiagnosticsEnabled(api);
+      if (!supportsDiagnostics && !runAttemptDiagnostics) {
         return;
       }
       if (typeof api.registerAgentHarness !== "function") {
         api.logger?.warn?.("[openclaw-rp] agent harness diagnostics requested but api.registerAgentHarness is unavailable");
         return;
       }
+      const harnessId = runAttemptDiagnostics ? "openclaw-rp-runattempt-diagnostic" : "openclaw-rp-diagnostic";
+      if (runAttemptDiagnostics) {
+        const config = getAgentHarnessConfig(api);
+        const providerFilter = asString(config.runAttemptProvider) || "<any>";
+        const modelFilter = asString(config.runAttemptModel) || "<any>";
+        api.logger?.warn?.(
+          `[openclaw-rp] registering UNSAFE agent harness runAttempt diagnostic provider=${providerFilter} model=${modelFilter}`,
+        );
+      }
       api.registerAgentHarness({
-        id: "openclaw-rp-diagnostic",
+        id: harnessId,
         label: "OpenClaw RP diagnostic harness",
         supports(ctx = {}) {
           const summary = summarizeAgentHarnessValue(ctx);
+          const match = agentHarnessRunAttemptMatches(ctx);
           api.logger?.info?.(`[openclaw-rp] agent_harness.supports diagnostic ${JSON.stringify(summary)}`);
+          if (runAttemptDiagnostics && match.matches) {
+            api.logger?.warn?.(
+              `[openclaw-rp] agent_harness.supports runAttempt diagnostic claiming ${JSON.stringify(match)}`,
+            );
+            return {
+              supported: true,
+              reason: match.reason,
+            };
+          }
+          if (runAttemptDiagnostics) {
+            api.logger?.info?.(
+              `[openclaw-rp] agent_harness.supports runAttempt diagnostic skipped ${JSON.stringify(match)}`,
+            );
+          }
           return {
             supported: false,
-            reason: "diagnostic_only",
+            reason: runAttemptDiagnostics ? match.reason : "diagnostic_only",
           };
         },
         async runAttempt(params = {}) {
           const summary = summarizeAgentHarnessValue(params);
-          api.logger?.warn?.(`[openclaw-rp] diagnostic agent harness runAttempt was called unexpectedly ${JSON.stringify(summary)}`);
+          api.logger?.warn?.(`[openclaw-rp] agent_harness.runAttempt diagnostic ${JSON.stringify(summary)}`);
+          if (runAttemptDiagnostics) {
+            return buildAgentHarnessDiagnosticResponse(params);
+          }
           throw new Error("OpenClaw RP diagnostic harness does not claim turns");
         },
       });
       registeredAgentHarness = true;
-      api.logger?.info?.("[openclaw-rp] registered diagnostic agent harness");
+      api.logger?.info?.(`[openclaw-rp] registered diagnostic agent harness id=${harnessId}`);
     }
 
     async function handleOwnedNativeRpTurn(hookName, event, ctx) {

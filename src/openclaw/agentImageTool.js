@@ -117,6 +117,24 @@ export const openclawRpPluginConfigSchema = {
           description:
             "Opt in to a non-claiming diagnostic agent harness that logs resolved provider/model support context for active OpenClaw turns.",
         },
+        runAttemptDiagnostics: {
+          type: "boolean",
+          default: false,
+          description:
+            "Unsafe opt-in diagnostic mode that claims matching harness turns, logs sanitized runAttempt parameter shape, and returns a controlled diagnostic response.",
+        },
+        runAttemptProvider: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Optional provider filter for runAttemptDiagnostics. When set, only matching provider contexts are claimed.",
+        },
+        runAttemptModel: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Optional model filter for runAttemptDiagnostics. When set, only matching model contexts are claimed.",
+        },
       },
     },
   },
