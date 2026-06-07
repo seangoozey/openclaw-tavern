@@ -177,4 +177,11 @@ CREATE TABLE IF NOT EXISTS rp_delayed_messages (
 
 CREATE INDEX IF NOT EXISTS idx_delayed_messages_due
   ON rp_delayed_messages(status, due_at);
+
+CREATE TABLE IF NOT EXISTS rp_runtime_settings (
+  key TEXT PRIMARY KEY,
+  value_json TEXT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 `;

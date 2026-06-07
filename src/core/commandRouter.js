@@ -136,6 +136,21 @@ function formatAgentImageConfigText(config = {}) {
   ].join("\n");
 }
 
+function formatModelConfigText(config = {}) {
+  const provider = String(config?.provider || "openai").trim() || "openai";
+  const configuredModel = String(config?.configuredModel || "").trim();
+  const runtimeModel = String(config?.model || "").trim();
+  const effectiveModel = runtimeModel || configuredModel;
+  const source = runtimeModel ? "sqlite override" : "config default";
+  return [
+    "RP model config",
+    `- provider: ${provider}`,
+    `- model: ${effectiveModel || "(provider default)"}`,
+    `- source: ${source}`,
+    configuredModel && runtimeModel ? `- configured default: ${configuredModel}` : null,
+  ].filter(Boolean).join("\n");
+}
+
 function normalizeAttachment(attachment) {
   if (!attachment) return null;
   if (attachment.buffer && Buffer.isBuffer(attachment.buffer)) {
@@ -175,6 +190,7 @@ function helpText() {
     "  /rp speak        Generate TTS for the latest assistant reply",
     "  /rp image [-prompt \"...\"] [-style \"...\"]",
     "  /rp video [-prompt \"...\"] [-style \"...\"]",
+    "  /rp model [-model \"...\"] [-clear]  Show or change the plugin-owned chat model",
     "  /rp agent-image [-provider inherit|openai|gemini] [-model \"...\"] [-clear-model] [-enable|-disable]",
     "  /rp companion-nudge [-reason \"...\"] [-idle-minutes N] [-mode balanced|checkin|question|report] [-force]",
     "  /rp companion-auto [-enable|-disable] [-min-hours N] [-max-per-day N] [-quiet-hours HH:MM-HH:MM]",
@@ -501,6 +517,8 @@ export class CommandRouter {
     rateLimiter,
     getAgentImageConfig,
     updateAgentImageConfig,
+    getModelConfig,
+    updateModelConfig,
     getDebugTracePath,
     getHookTracePath,
     initializeDebugTracePath,
@@ -514,6 +532,8 @@ export class CommandRouter {
     this.rateLimiter = rateLimiter || new InMemoryRateLimiter({ windowMs: 5000 });
     this.getAgentImageConfig = getAgentImageConfig;
     this.updateAgentImageConfig = updateAgentImageConfig;
+    this.getModelConfig = getModelConfig;
+    this.updateModelConfig = updateModelConfig;
     this.getDebugTracePath = getDebugTracePath;
     this.getHookTracePath = getHookTracePath;
     this.initializeDebugTracePath = initializeDebugTracePath;
@@ -597,6 +617,8 @@ export class CommandRouter {
         return this.image(nctx, options);
       case "video":
         return this.video(nctx, options);
+      case "model":
+        return this.model(nctx, options);
       case "agent-image":
         return this.agentImage(nctx, options);
       case "companion-nudge":
@@ -1496,6 +1518,50 @@ export class CommandRouter {
     const lines = [
       "Agent image config updated",
       formatAgentImageConfigText(next),
+    ];
+    return ok(lines.join("\n"), {
+      text: lines.join("\n"),
+      config: next,
+    });
+  }
+
+  async model(_ctx, options) {
+    const current =
+      typeof this.getModelConfig === "function"
+        ? this.getModelConfig() || {}
+        : this.store.getRuntimeSetting?.("model.active")?.value || {};
+    const model = options?.model;
+    const clear = Boolean(options?.clear || options?.["clear-model"]);
+    const hasMutation = model !== undefined || clear;
+
+    if (!hasMutation) {
+      return ok("RP model config", {
+        text: formatModelConfigText(current),
+        config: current,
+      });
+    }
+
+    if (model !== undefined && clear) {
+      throw new RPError(RP_ERROR_CODES.BAD_REQUEST, "-model and -clear cannot be used together");
+    }
+
+    const patch = {};
+    if (clear) {
+      patch.model = "";
+    } else {
+      const normalizedModel = String(model || "").trim();
+      if (!normalizedModel) {
+        throw new RPError(RP_ERROR_CODES.BAD_REQUEST, "-model must not be empty");
+      }
+      patch.model = normalizedModel;
+    }
+
+    const next = typeof this.updateModelConfig === "function"
+      ? await this.updateModelConfig(patch)
+      : this.store.setRuntimeSetting?.("model.active", patch)?.value || patch;
+    const lines = [
+      clear ? "RP model override cleared" : "RP model updated",
+      formatModelConfigText(next),
     ];
     return ok(lines.join("\n"), {
       text: lines.join("\n"),

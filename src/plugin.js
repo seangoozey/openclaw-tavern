@@ -10,6 +10,9 @@ import { runWithTimeout } from "./utils/timeout.js";
 export function createRPPlugin(options = {}) {
   const hookTimeoutMs = Number(options.hookTimeoutMs || 10000);
   const store = resolveStore(options);
+  const getModelConfig =
+    options.getModelConfig ||
+    (() => store.getRuntimeSetting?.("model.active")?.value || {});
   const sessionManager = new SessionManager({
     store,
     modelProvider: options.modelProvider,
@@ -18,6 +21,7 @@ export function createRPPlugin(options = {}) {
     contextPolicy: options.contextPolicy,
     tokenEstimator: options.tokenEstimator,
     summaryRetryConfig: options.summaryRetryConfig,
+    getRuntimeModelConfig: getModelConfig,
   });
   const router = new CommandRouter({
     store,
@@ -29,6 +33,8 @@ export function createRPPlugin(options = {}) {
     rateLimiter: options.rateLimiter,
     getAgentImageConfig: options.getAgentImageConfig,
     updateAgentImageConfig: options.updateAgentImageConfig,
+    getModelConfig,
+    updateModelConfig: options.updateModelConfig,
     getDebugTracePath: options.getDebugTracePath,
     getHookTracePath: options.getHookTracePath,
     initializeDebugTracePath: options.initializeDebugTracePath,

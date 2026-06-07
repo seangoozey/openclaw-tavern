@@ -3017,6 +3017,30 @@ export default {
       };
     }
 
+    function getCurrentModelConfig() {
+      const pluginConfig = getOpenClawRpPluginConfig(api?.config);
+      const runtime = store?.getRuntimeSetting?.("model.active")?.value || {};
+      const provider = asString(pluginConfig.provider) || "openai";
+      const configuredModel =
+        asString(pluginConfig.openai?.model || pluginConfig.openai?.model_id) ||
+        asString(pluginConfig.agentHarness?.runAttemptModel);
+      return {
+        provider,
+        configuredModel,
+        model: asString(runtime.model),
+      };
+    }
+
+    function updateModelConfig(patch = {}) {
+      const model = asString(patch.model);
+      if (!model) {
+        store?.deleteRuntimeSetting?.("model.active");
+        return getCurrentModelConfig();
+      }
+      store?.setRuntimeSetting?.("model.active", { model });
+      return getCurrentModelConfig();
+    }
+
     function updateAgentImageConfig(patch = {}) {
       const fileConfig = loadOpenClawFileConfig();
       const rootConfig =
@@ -3150,6 +3174,8 @@ export default {
         logger: api.logger,
         getAgentImageConfig: getCurrentAgentImageConfig,
         updateAgentImageConfig,
+        getModelConfig: getCurrentModelConfig,
+        updateModelConfig,
         getDebugTracePath: (ctx, session) => resolveRpDebugTracePath({ sessionId: session?.id, ctx }),
         getHookTracePath: () => (stateDir ? path.join(stateDir, "hook-debug.log") : null),
         initializeDebugTracePath: (filePath, ctx, session) =>

@@ -59,6 +59,55 @@ export class SqliteStore {
     this.db.exec(SQLITE_SCHEMA_SQL);
   }
 
+  getRuntimeSetting(key) {
+    const normalizedKey = String(key || "").trim();
+    if (!normalizedKey) {
+      return null;
+    }
+    const row = this.db.prepare("SELECT * FROM rp_runtime_settings WHERE key = ?").get(normalizedKey);
+    if (!row) {
+      return null;
+    }
+    let value = null;
+    try {
+      value = JSON.parse(row.value_json || "null");
+    } catch {
+      value = null;
+    }
+    return {
+      key: row.key,
+      value,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
+  }
+
+  setRuntimeSetting(key, value) {
+    const normalizedKey = String(key || "").trim();
+    if (!normalizedKey) {
+      throw new RPError(RP_ERROR_CODES.BAD_REQUEST, "Runtime setting key is required");
+    }
+    this.db
+      .prepare(
+        `INSERT INTO rp_runtime_settings (key, value_json)
+         VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET
+           value_json = excluded.value_json,
+           updated_at = CURRENT_TIMESTAMP`,
+      )
+      .run(normalizedKey, safeJson(value));
+    return this.getRuntimeSetting(normalizedKey);
+  }
+
+  deleteRuntimeSetting(key) {
+    const normalizedKey = String(key || "").trim();
+    if (!normalizedKey) {
+      return false;
+    }
+    const result = this.db.prepare("DELETE FROM rp_runtime_settings WHERE key = ?").run(normalizedKey);
+    return Boolean(result?.changes);
+  }
+
   configureVectorSearch({ extensionPath, distanceFunction } = {}) {
     let loaded = false;
     if (extensionPath) {

@@ -37,6 +37,25 @@ The agent should instead be initialized as an RP host/controller. The card chara
 - `/rp sync-agent-persona` remains legacy/manual character override mode, not the default architecture.
 - `/rp` command output was converted to English for core command-router responses.
 
+## Parking Notes - 2026-06-07
+
+Current state to resume from:
+
+- Public plugin identity is now `texting-sim` / OpenClaw Texting Simulator. `openclaw-rp-plugin` remains supported as a legacy config alias, but hook permissions such as `allowConversationAccess` should be under `plugins.entries.texting-sim`.
+- Agent Harness owned generation is the primary path. Direct plugin-owned OpenRouter/OpenAI-compatible generation works and is faster than routing through OpenClaw's normal provider path.
+- Owned harness safety fixes are in place: `supports()` now requires an allowed agent and an active RP session before claiming. Normal communication from non-RP agents, or from the RP host agent outside an active `/rp` session, should fall through to OpenClaw.
+- Native owned hooks should remain disabled while `agentHarness.ownedGeneration=true`; they are fallback/debug paths only. The code skips native owned generation if harness owned generation is active.
+- `/rp model` is implemented for model iteration. It stores the plugin-owned chat model override in SQLite table `rp_runtime_settings`; `/rp model -clear` returns to the configured default. Provider/API key config still belongs in `openclaw.json`/env.
+- Recommended harness config for flexible model iteration: keep `agentHarness.runAttemptProvider` set, omit `agentHarness.runAttemptModel` unless a narrower claim filter is needed, and change the generation model with `/rp model -model <id>`.
+- Last verification: `npm test` passed with 133/133 tests after the SQLite model manager work.
+
+Next live checks:
+
+- Update/reload the container and verify `/rp hooks-status` shows owned harness registered for `texting-sim`.
+- Send normal messages to a non-RP agent and to the RP host outside an active session; both should be handled by OpenClaw, not the plugin.
+- Start an RP session and confirm active Telegram turns are owned by the plugin only once.
+- Run `/rp model`, `/rp model -model <openrouter-model-id>`, then one RP turn; logs/provider usage should show the new model. Use `/rp model -clear` to return to config default.
+
 ## Parking Notes - 2026-06-06
 
 Current live conclusion:
@@ -138,6 +157,7 @@ Needed:
 - Harness support diagnostics are now quiet by default. `agent_harness.supports` summaries, skip lines, claim lines, and full `runAttempt` parameter summaries only log when `agentHarness.diagnostics=true` or `runAttemptDiagnostics=true`; normal owned generation keeps high-signal registration/generation/error logs only.
 - Allowed-agent gate fix: `agentHarness.ownedGeneration` was claiming every matching provider/model across all agents even when `config.allowedAgents` only named the RP agent. Fix added: harness `supports()` now applies `allowedAgents` before claiming, treats missing agent identity as not allowed when an allowlist exists, and extracts agent IDs from `sessionKey`, `sandboxSessionKey`, and harness requester session keys.
 - Outside-session ownership fix: even for the allowed RP agent, owned harness `supports()` now requires an active RP session for the current channel before claiming. Normal non-`/rp` communication by the RP host agent should fall through to OpenClaw instead of receiving a synthetic "No active RP session" plugin response.
+- Model manager work: `/rp model` now stores a plugin-owned generation model override in SQLite (`rp_runtime_settings`) so model iteration does not require editing `openclaw.json`. This intentionally does not change provider/API-key config. For owned harness claiming, keep `runAttemptProvider` configured; `runAttemptModel` can be omitted if the active-session/allowed-agent gates are enough and you want `/rp model` to control the generation model independently.
 - Stale-context fix: after `/new` or `/rp end` followed by a fresh `/rp start`, owned native hook recovery must not reuse an ended session that was previously associated with the OpenClaw agent session key. It now deletes stale recovered contexts and falls back rather than generating against the wrong session.
 - Direct provider-auth fix: OpenClaw provider routes such as OpenRouter may rely on OpenClaw-managed auth/cookies that plugin direct HTTP providers cannot access. Do not treat those as usable plugin-owned generation providers unless a direct API key is available. This keeps native claim hooks from producing 401 synthetic errors and reinforces that a real no-duplicate owned path likely needs an agent harness/provider-runtime integration.
 - Telegram key normalization: future `/rp start` command contexts strip redundant `telegram:` identity prefixes and avoid appending a direct-chat thread id when it duplicates the conversation id. Existing sessions may still show old malformed keys until restarted.

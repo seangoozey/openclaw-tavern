@@ -46,6 +46,7 @@ OpenClaw Texting Simulator is a persistent character texting runtime for OpenCla
 - `/rp speak`: TTS from latest assistant reply
 - `/rp image`: image generation from role context, supports `-prompt` / `-style`
 - `/rp video`: AI video generation from role context, supports `-prompt` / `-style` (Gemini Veo 3.1)
+- `/rp model`: inspect or switch the plugin-owned chat model without editing OpenClaw config
 - `/rp agent-image`: inspect or switch native-agent image provider / model / enabled state
 - Optional agent tool: `rp_generate_image`, which lets the native OpenClaw agent generate and return images in normal non-`/rp` chats
 - Automatic media follow-ups in Telegram: image, voice, and video auto-generation when user intent is detected
@@ -119,6 +120,7 @@ Note: install entry names vary by gateway version (plugin manager button vs admi
 - `/rp speak`
 - `/rp image [-prompt "..."] [-style "..."]`
 - `/rp video [-prompt "..."] [-style "..."]`
+- `/rp model [-model "..."] [-clear]`
 - `/rp agent-image [-provider inherit|openai|gemini] [-model "..."] [-clear-model] [-enable|-disable]`
 - `/rp companion-nudge [-reason "..."] [-idle-minutes N] [-mode balanced|checkin|question|report] [-force]`
 - `/rp companion-auto [-enable|-disable] [-min-hours N] [-max-per-day N] [-quiet-hours HH:MM-HH:MM] [-idle-minutes N] [-mode balanced|checkin|question|report]`
@@ -232,8 +234,8 @@ Add plugin config under your OpenClaw config:
 - `nativeHooks.inboundClaim`, `nativeHooks.beforeAgentReply`, `nativeHooks.beforeAgentRun`: opt-in candidates for plugin-owned RP turns. Enable one at a time in Docker to identify which hook exists in your OpenClaw build. When a supported hook fires during an active RP session, the plugin generates the RP reply directly and asks OpenClaw to block the normal agent run.
 - `agentHarness.diagnostics`: opt-in non-claiming harness probe. When `true`, the plugin logs sanitized `agent_harness.supports` context so you can inspect whether OpenClaw exposes the current agent/provider/model at harness-selection time.
 - `agentHarness.runAttemptDiagnostics`: unsafe opt-in harness probe. When `true`, the plugin claims matching harness selections, logs sanitized `runAttempt` parameter shape, and returns a controlled diagnostic response instead of a normal model reply. Use only on the dedicated RP agent while testing.
-- `agentHarness.ownedGeneration`: unsafe opt-in RP harness mode. When `true`, the plugin claims matching harness selections and routes active RP sessions through plugin-owned RP generation. Because `supports()` cannot see active session state, use this only on a dedicated RP agent/model; non-RP turns on that model will not fall back to the host agent.
-- `agentHarness.runAttemptProvider` / `agentHarness.runAttemptModel`: optional filters for `runAttemptDiagnostics` and `ownedGeneration`. Set these to the RP agent's exact resolved provider/model so the harness does not claim unrelated model calls.
+- `agentHarness.ownedGeneration`: opt-in RP harness mode. When `true`, the plugin claims matching harness selections only for allowed agents with an active RP session, then routes the turn through plugin-owned RP generation.
+- `agentHarness.runAttemptProvider` / `agentHarness.runAttemptModel`: optional filters for `runAttemptDiagnostics` and `ownedGeneration`. Set `runAttemptProvider` to the RP agent's resolved provider. `runAttemptModel` can be omitted if the allowed-agent and active-session gates are sufficient and you want `/rp model` to control the generation model independently.
 
 For plugin-owned OpenRouter generation, use the OpenAI-compatible provider and an env SecretRef-style API key:
 
@@ -261,6 +263,16 @@ For plugin-owned OpenRouter generation, use the OpenAI-compatible provider and a
 ```
 
 The plugin resolves `source: "env"` SecretRef-style objects from the container environment. File and exec SecretRef providers are not resolved by this plugin unless OpenClaw exposes a generic plugin secret-resolution API.
+
+In native OpenClaw mode, the plugin-owned chat model can be changed without editing `openclaw.json`:
+
+```bash
+/rp model
+/rp model -model z-ai/glm-4.7-flash
+/rp model -clear
+```
+
+The override is stored in the plugin SQLite database and survives gateway restarts. It changes the plugin-owned generation model only; provider and API key config still come from `openclaw.json` or environment configuration.
 
 To let an OpenClaw agent use it, also allow `rp_generate_image` in the agent tool config. On OpenClaw `2026.3.x`, the recommended config is:
 

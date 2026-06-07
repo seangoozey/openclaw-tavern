@@ -153,7 +153,7 @@ function renderCompanionText(companion) {
 }
 
 export class SessionManager {
-  constructor({ store, modelProvider, embeddingProvider, logger, contextPolicy, tokenEstimator, summaryRetryConfig }) {
+  constructor({ store, modelProvider, embeddingProvider, logger, contextPolicy, tokenEstimator, summaryRetryConfig, getRuntimeModelConfig }) {
     this.store = store;
     this.modelProvider = modelProvider;
     this.logger = logger || console;
@@ -171,6 +171,7 @@ export class SessionManager {
       timeoutMs: 30000,
       ...(summaryRetryConfig || {}),
     };
+    this.getRuntimeModelConfig = getRuntimeModelConfig;
   }
 
   async processDialogue({ channelSessionKey, userId, content, userTurnAlreadyStored = false }) {
@@ -1074,7 +1075,14 @@ export class SessionManager {
   }
 
   resolveModelConfig({ preset, extraParams, commandOverrides } = {}) {
-    return resolveModelConfig({ preset, extraParams, commandOverrides });
+    const config = resolveModelConfig({ preset, extraParams, commandOverrides });
+    const runtime = typeof this.getRuntimeModelConfig === "function"
+      ? this.getRuntimeModelConfig() || {}
+      : {};
+    if (runtime.model) {
+      config.model_id = runtime.model;
+    }
+    return config;
   }
 }
 

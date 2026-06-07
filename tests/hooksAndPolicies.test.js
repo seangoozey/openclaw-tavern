@@ -210,6 +210,45 @@ test("agent-image command updates config through callback", async () => {
   assert.match(result.response.data.text, /provider: gemini/);
 });
 
+test("model command stores runtime model override", async () => {
+  const plugin = createRPPlugin({});
+
+  let result = await plugin.hooks.message_received(makeCtx("/rp model"));
+  assert.equal(result.response.ok, true);
+  assert.match(result.response.data.text, /RP model config/);
+  assert.match(result.response.data.text, /source: config default/);
+
+  result = await plugin.hooks.message_received(makeCtx("/rp model -model z-ai/glm-4.7-flash"));
+  assert.equal(result.response.ok, true);
+  assert.match(result.response.data.text, /RP model updated/);
+  assert.match(result.response.data.text, /z-ai\/glm-4\.7-flash/);
+  assert.match(result.response.data.text, /source: sqlite override/);
+
+  result = await plugin.hooks.message_received(makeCtx("/rp model -clear"));
+  assert.equal(result.response.ok, true);
+  assert.match(result.response.data.text, /RP model override cleared/);
+  assert.match(result.response.data.text, /source: config default/);
+});
+
+test("runtime model override is passed to generation", async () => {
+  let capturedModel = null;
+  const plugin = createRPPlugin({
+    modelProvider: {
+      async generate({ modelConfig }) {
+        capturedModel = modelConfig?.model_id || "";
+        return { content: "assistant reply" };
+      },
+    },
+  });
+
+  await seedSession(plugin);
+  await plugin.hooks.message_received(makeCtx("/rp model -model z-ai/glm-4.7-flash"));
+  const result = await plugin.hooks.message_received(makeCtx("hello"));
+
+  assert.equal(result.response.ok, true);
+  assert.equal(capturedModel, "z-ai/glm-4.7-flash");
+});
+
 test("paused session ignores normal messages", async () => {
   const plugin = createRPPlugin({
     modelProvider: {

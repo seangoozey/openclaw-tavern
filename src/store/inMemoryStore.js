@@ -35,6 +35,38 @@ export class InMemoryStore {
     this.turnEmbeddings = new Map();
     this.companionSchedules = new Map();
     this.delayedMessages = new Map();
+    this.runtimeSettings = new Map();
+  }
+
+  getRuntimeSetting(key) {
+    const normalizedKey = String(key || "").trim();
+    if (!normalizedKey) {
+      return null;
+    }
+    const row = this.runtimeSettings.get(normalizedKey);
+    return row ? clone(row) : null;
+  }
+
+  setRuntimeSetting(key, value) {
+    const normalizedKey = String(key || "").trim();
+    if (!normalizedKey) {
+      throw new RPError(RP_ERROR_CODES.BAD_REQUEST, "Runtime setting key is required");
+    }
+    const existing = this.runtimeSettings.get(normalizedKey) || {};
+    const now = nowIso();
+    const row = {
+      key: normalizedKey,
+      value: clone(value || {}),
+      created_at: existing.created_at || now,
+      updated_at: now,
+    };
+    this.runtimeSettings.set(normalizedKey, row);
+    return clone(row);
+  }
+
+  deleteRuntimeSetting(key) {
+    const normalizedKey = String(key || "").trim();
+    return normalizedKey ? this.runtimeSettings.delete(normalizedKey) : false;
   }
 
   nextAssetVersion(userId, type, name) {
