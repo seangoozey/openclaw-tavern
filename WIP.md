@@ -47,7 +47,8 @@ Current state to resume from:
 - Native owned hooks should remain disabled while `agentHarness.ownedGeneration=true`; they are fallback/debug paths only. The code skips native owned generation if harness owned generation is active.
 - `/rp model` is implemented for model iteration. It stores the plugin-owned chat model override in SQLite table `rp_runtime_settings`; `/rp model -clear` returns to the configured default. Provider/API key config still belongs in `openclaw.json`/env.
 - Recommended harness config for flexible model iteration: keep `agentHarness.runAttemptProvider` set, omit `agentHarness.runAttemptModel` unless a narrower claim filter is needed, and change the generation model with `/rp model -model <id>`.
-- Last verification: `npm test` passed with 133/133 tests after the SQLite model manager work.
+- `/rp start -preset <name>` now supports card-authored texting state presets from `data.extensions["openclaw/texting_persona"].state_presets` when no imported generation preset matches that name. These presets are session-start overlays for testing alternate default states; they do not mutate the card or existing sessions. Sarah's local draft card has `normal`, `busy_library`, `late_night_playful`, and `guarded_reset` test presets.
+- Last verification: `npm test` passed with 136/136 tests after adding card-authored state presets for `/rp start -preset <name>`.
 
 Next live checks:
 
@@ -419,17 +420,18 @@ Improve full Character Card V2/V3 support by importing `character_book` into lor
 
 ### 13. Card Iteration Tool
 
-Status: not started.
+Status: implemented.
 
-Add a small tool/script to update an exported PNG character card with the current draft JSON for fast iteration.
+Implemented a small tool/script to update an exported PNG character card with the current draft JSON for fast iteration.
 
-Needed:
+Implemented:
 
-- Read card JSON from `card-makefiles/<name>.json`.
-- Embed it into an existing PNG card using the standard `ccv3` tEXt chunk.
-- Also optionally write legacy `chara` metadata for older plugin/container builds.
+- `scripts/update-card-png.js` reads a JSON card and embeds it into an existing PNG.
+- `npm run card:update -- <name>` reads `card-makefiles/<name>.json` and updates `card-makefiles/<name>.png`.
+- `npm run card:update-png -- --png <card.png> --json <card.json> [--out <card.png>]` remains available for explicit paths.
+- The script writes the standard `ccv3` tEXt chunk and, by default, legacy `chara` metadata for older plugin/container builds.
 - Preserve the PNG image data while replacing card metadata.
-- Provide a simple command documented in README, for example `npm run card:update -- SarahMiller`.
+- `/rp update-card <name_or_id>` replaces an imported engine card from an attachment, `-file`, or `-url`, keeping the same asset id so existing references can pick up the updated card detail.
 
 ### 14. Docker Smoke Test
 

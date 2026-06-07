@@ -48,6 +48,7 @@ type TextingPersonaExtension = {
   runtime_target?: "openclaw_proactive_texting" | string;
   timezone?: string;
   default_state?: TextingPersonaState;
+  state_presets?: Record<string, TextingPersonaStatePreset>;
   state_values?: StateValueHints;
   schedule?: TextingSchedule;
   availability?: AvailabilityPolicy;
@@ -107,6 +108,41 @@ Recommended defaults:
   "trust_in_user": 0,
   "flirt_comfort": 0,
   "relationship_temperature": "cool"
+}
+```
+
+`state_presets` defines named session-start overlays for alternate starting conditions. They do not mutate `default_state` or existing sessions. Start a new session with a preset using:
+
+```text
+/rp start -card <card_name_or_id> -preset <state_preset_name>
+```
+
+If an imported generation preset and a card state preset share the same name, the imported generation preset wins. Card state presets are only used when no imported preset matches that name. The built-in `Default` generation preset remains available.
+
+```ts
+type TextingPersonaStatePreset = {
+  description?: string;
+  state?: Partial<TextingPersonaState>;
+};
+```
+
+Example:
+
+```json
+{
+  "state_presets": {
+    "busy_library": {
+      "description": "Start Sarah distracted while studying.",
+      "state": {
+        "current_location": "library",
+        "current_activity": "studying",
+        "attention_level": "distracted",
+        "emotional_state": "stressed",
+        "trust_in_user": 3,
+        "relationship_temperature": "cool"
+      }
+    }
+  }
 }
 ```
 

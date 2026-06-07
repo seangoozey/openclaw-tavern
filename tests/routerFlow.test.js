@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createRPPlugin } from "../src/index.js";
@@ -156,6 +156,59 @@ test("import card from --file path", async () => {
   assert.ok(result.response.data.asset_id.startsWith("card_"));
 });
 
+test("update-card replaces an imported engine card", async () => {
+  const plugin = createRPPlugin({
+    modelProvider: {
+      async generate() {
+        return { content: "assistant reply" };
+      },
+    },
+  });
+
+  const dir = await mkdtemp(path.join(os.tmpdir(), "rp-update-card-"));
+  const file = path.join(dir, "updated.json");
+  await writeFile(
+    file,
+    JSON.stringify({
+      spec: "chara_card_v3",
+      spec_version: "3.0",
+      data: {
+        name: "Alice Updated",
+        description: "new role",
+        group_only_greetings: [],
+      },
+    }),
+    "utf8",
+  );
+
+  try {
+    let result = await plugin.hooks.message_received(
+      makeCtx("/rp import-card", {
+        attachments: [
+          {
+            filename: "alice.json",
+            buffer: Buffer.from(JSON.stringify({ name: "Alice", description: "old role" })),
+          },
+        ],
+      }),
+    );
+    assert.equal(result.response.ok, true);
+    const cardId = result.response.data.asset_id;
+
+    result = await plugin.hooks.message_received(makeCtx(`/rp update-card ${cardId} -file "${file}"`));
+    assert.equal(result.response.ok, true);
+    assert.equal(result.response.data.asset_id, cardId);
+    assert.match(result.response.message, /card updated successfully/);
+
+    result = await plugin.hooks.message_received(makeCtx(`/rp show-asset ${cardId}`));
+    assert.equal(result.response.ok, true);
+    assert.match(result.response.message, /Alice Updated/);
+    assert.match(result.response.message, /new role/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("companion nudge returns proactive message blocks", async () => {
   const plugin = createRPPlugin({
     modelProvider: {
@@ -267,6 +320,33 @@ function textingCardPayload() {
             flirt_comfort: 0,
             relationship_temperature: "cool",
           },
+          state_presets: {
+            anxious: {
+              description: "Test preset for a guarded, distracted start.",
+              state: {
+                current_location: "library",
+                current_activity: "studying",
+                attention_level: "distracted",
+                emotional_state: "anxious",
+                trust_in_user: 2,
+                relationship_temperature: "cool",
+                test_marker: "preset_anxious",
+              },
+            },
+            playful: {
+              description: "Test preset for a warmer start.",
+              state: {
+                current_location: "dorm_room",
+                current_activity: "avoiding_homework",
+                attention_level: "casually_available",
+                emotional_state: "playful",
+                trust_in_user: 18,
+                flirt_comfort: 8,
+                relationship_temperature: "warm",
+                test_marker: "preset_playful",
+              },
+            },
+          },
           schedule: {
             day_rhythm: {
               evening: {
@@ -334,6 +414,39 @@ test("texting persona extension persists state and injects runtime prompt", asyn
   assert.ok(state.trust_in_user >= 8);
   assert.ok(capturedPrompt.messages.some((msg) => String(msg.content).includes("Runtime texting persona state")));
   assert.ok(capturedPrompt.messages.some((msg) => String(msg.content).includes("trust_in_user")));
+});
+
+test("start can use card texting persona state preset", async () => {
+  const plugin = createRPPlugin({
+    modelProvider: {
+      async generate() {
+        return { content: "assistant reply" };
+      },
+    },
+  });
+
+  let r = await plugin.hooks.message_received(
+    makeCtx("/rp import-card", {
+      attachments: [{ filename: "SarahMiller", buffer: Buffer.from(JSON.stringify(textingCardPayload())) }],
+    }),
+  );
+  const cardId = r.response.data.asset_id;
+
+  r = await plugin.hooks.message_received(makeCtx(`/rp start -card ${cardId} -preset anxious`));
+  assert.equal(r.response.ok, true);
+  assert.equal(r.response.data.preset_name, "Default");
+  assert.equal(r.response.data.state_preset_name, "anxious");
+
+  const sessionId = r.response.data.session_id;
+  const stateRow = plugin.services.store.getSessionState(sessionId);
+  const state = JSON.parse(stateRow.state_json);
+  assert.equal(state.state_preset_name, "anxious");
+  assert.equal(state.test_marker, "preset_anxious");
+  assert.equal(state.trust_in_user, 2);
+
+  const debug = await plugin.hooks.message_received(makeCtx("/rp state"));
+  assert.equal(debug.response.ok, true);
+  assert.match(debug.response.data.text, /state_preset_name: anxious/);
 });
 
 test("texting persona companion nudge returns direct text without generic blocks", async () => {

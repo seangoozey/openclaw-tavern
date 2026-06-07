@@ -110,6 +110,7 @@ export class InMemoryStore {
     }
 
     asset.source_format = sourceFormat || asset.source_format;
+    asset.name = String(detail?.name || "").trim() || asset.name;
     asset.raw_json = rawJson || asset.raw_json;
     asset.extra_json = extraJson || asset.extra_json;
     asset.content_hash = contentHash || asset.content_hash;

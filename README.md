@@ -96,7 +96,7 @@ Note: install entry names vary by gateway version (plugin manager button vs admi
 ### Step 2: Start Session
 
 ```text
-/rp start -card <card_name_or_id> -preset <preset_name_or_id> -lorebook <lorebook_name_or_id>
+/rp start -card <card_name_or_id> -preset <preset_name_or_card_state_preset> -lorebook <lorebook_name_or_id>
 ```
 
 ### Step 3: Chat Normally
@@ -110,11 +110,13 @@ Note: install entry names vary by gateway version (plugin manager button vs admi
 
 - `/rp help`
 - `/rp import-card` / `/rp import-preset` / `/rp import-lorebook`
+- `/rp update-card <name_or_id> + attachment (or -file/-url)`
 - `/rp list-assets [-type card|preset|lorebook] [-search "..."] [-page N]`
 - `/rp show-asset <name_or_id>`
 - `/rp delete-asset <id> -confirm`
 - `/rp start [-card ...] [-preset ...] [-lorebook ...]`
 - `/rp start` - starts the most recently imported card in the current channel
+- `/rp start -preset <name>` - uses an imported generation preset if one matches; otherwise uses a matching card texting state preset from `data.extensions["openclaw/texting_persona"].state_presets`
 - `/rp session`
 - `/rp retry [-edit "..."]`
 - `/rp speak`
@@ -134,6 +136,26 @@ Note: install entry names vary by gateway version (plugin manager button vs admi
 - `/rp sync-agent-persona` - legacy/manual mode: write current RP character into the agent's `SOUL.md`
 - `/rp restore-agent-persona` - remove legacy RP character preset from `SOUL.md`, restore original persona
 - `/rp pause` / `/rp resume` / `/rp end`
+
+## Card Iteration
+
+To update a PNG character card from a local JSON draft while preserving the PNG image:
+
+```bash
+npm run card:update -- SarahMiller
+npm run card:update-png -- --png card.png --json card-makefiles/SarahMiller.json
+```
+
+The name form reads `card-makefiles/SarahMiller.json` and updates `card-makefiles/SarahMiller.png`. Use `--out updated.png` to write a separate file. The script writes `ccv3` metadata and legacy `chara` metadata by default.
+
+To update the card already imported into the plugin engine:
+
+```bash
+/rp update-card Sarah -file /path/to/SarahMiller.json
+/rp update-card card_abc123 -file /path/to/SarahMiller.png
+```
+
+This replaces the existing card asset in plugin storage while keeping its asset id.
 
 ## Companion Quick Examples
 

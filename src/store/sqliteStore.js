@@ -207,13 +207,14 @@ export class SqliteStore {
       throw new RPError(RP_ERROR_CODES.PERMISSION_DENIED, "Cannot replace asset owned by another user");
     }
 
+    const nextName = String(detail?.name || "").trim() || asset.name;
     this.db
       .prepare(
         `UPDATE rp_assets
-         SET source_format = ?, raw_json = ?, extra_json = ?, content_hash = ?, updated_at = CURRENT_TIMESTAMP
+         SET name = ?, source_format = ?, raw_json = ?, extra_json = ?, content_hash = ?, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
       )
-      .run(sourceFormat || asset.source_format, rawJson || asset.raw_json, extraJson || asset.extra_json, contentHash || asset.content_hash, assetId);
+      .run(nextName, sourceFormat || asset.source_format, rawJson || asset.raw_json, extraJson || asset.extra_json, contentHash || asset.content_hash, assetId);
 
     if (asset.type === RP_ASSET_TYPES.CARD && detail) {
       this.saveCardDetail(assetId, detail);

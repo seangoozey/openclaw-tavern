@@ -1,6 +1,6 @@
 {
   "name": "texting-sim",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Persistent character texting simulator for OpenClaw with card import, owned generation, memory, schedule-aware state, proactive outreach, and multimodal tools.",
   "author": "seangoozey",
   "license": "MIT",
@@ -42,6 +42,8 @@
   },
   "scripts": {
     "test": "node --test",
-    "smoke": "node examples/smoke-run.js"
+    "smoke": "node examples/smoke-run.js",
+    "card:update": "node scripts/update-card-png.js",
+    "card:update-png": "node scripts/update-card-png.js"
   }
 }

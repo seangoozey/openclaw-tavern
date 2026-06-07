@@ -329,6 +329,42 @@ export function hasTextingPersona(card) {
   return Boolean(getTextingPersonaConfig(card));
 }
 
+export function getTextingPersonaStatePreset(config, presetName) {
+  const name = String(presetName || "").trim();
+  if (!name || !config || typeof config !== "object") {
+    return null;
+  }
+  const containers = [
+    config.state_presets,
+    config.default_state_presets,
+    config.presets,
+  ].filter((item) => item && typeof item === "object" && !Array.isArray(item));
+  const needle = name.toLowerCase();
+  for (const container of containers) {
+    for (const [key, value] of Object.entries(container)) {
+      if (String(key).trim().toLowerCase() !== needle) {
+        continue;
+      }
+      const preset =
+        value && typeof value === "object" && !Array.isArray(value)
+          ? value
+          : {};
+      const state =
+        preset.state && typeof preset.state === "object" && !Array.isArray(preset.state)
+          ? preset.state
+          : preset.default_state && typeof preset.default_state === "object" && !Array.isArray(preset.default_state)
+            ? preset.default_state
+            : preset;
+      return {
+        name: key,
+        description: typeof preset.description === "string" ? preset.description : "",
+        state: normalizeStatePatch(state),
+      };
+    }
+  }
+  return null;
+}
+
 function parseClock(value) {
   const match = String(value || "").match(/^(\d{1,2}):(\d{2})$/);
   if (!match) {
@@ -633,7 +669,14 @@ export function ensureTextingPersonaState({ store, sessionId, card, event, now =
 
   const existing = typeof store.getSessionState === "function" ? store.getSessionState(sessionId) : null;
   const stored = existing ? safeParseJson(existing.state_json, {}) : null;
-  let state = normalizeState(stored, config);
+  const initialState =
+    !existing && event?.type === "session_start"
+      ? normalizeStatePatch(event.initial_state || event.state || {})
+      : {};
+  let state = normalizeState({ ...(stored || {}), ...initialState }, config);
+  if (!existing && event?.type === "session_start" && event.state_preset_name) {
+    state.state_preset_name = String(event.state_preset_name);
+  }
   const runtimeClock = buildRuntimeClock({
     now,
     timeZone: config?.timezone || config?.schedule?.timezone,

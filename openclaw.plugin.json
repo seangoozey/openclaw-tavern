@@ -2,7 +2,7 @@
   "id": "texting-sim",
   "name": "OpenClaw Texting Simulator Plugin",
   "description": "Persistent character texting simulator for OpenClaw with card import, owned generation, memory, schedule-aware state, proactive outreach, and multimodal tools.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "author": "seangoozey",
   "homepage": "https://github.com/seangoozey/openclaw-tavern",
   "license": "MIT",

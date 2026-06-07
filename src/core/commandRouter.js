@@ -11,6 +11,7 @@ import { InMemoryRateLimiter } from "./rateLimiter.js";
 import { DEFAULT_PRESET, DEFAULT_PRESET_NAME } from "./defaultPreset.js";
 import { cleanCardText, extractDialogueForTts, replacePlaceholders, stripHtml } from "../utils/textCleaner.js";
 import { PLUGIN_NAME, PLUGIN_VERSION } from "../version.js";
+import { getTextingPersonaConfig, getTextingPersonaStatePreset } from "./textingPersona.js";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -172,6 +173,7 @@ function helpText() {
     "",
     "Import",
     "  /rp import-card + attachment (or -url/-file)",
+    "  /rp update-card <name_or_id> + attachment (or -url/-file)",
     "  /rp import-preset + attachment (or -url/-file)",
     "  /rp import-lorebook + attachment (or -url/-file)",
     "  Tip: send a file first, then run /rp import-* if your channel supports attachment fallback.",
@@ -183,7 +185,7 @@ function helpText() {
     "",
     "Session control",
     "  /rp -version    Show plugin version",
-    "  /rp start [-card <name_or_id>] [-preset <name_or_id>] [-lorebook <name_or_id> ...]",
+    "  /rp start [-card <name_or_id>] [-preset <preset_or_card_state_preset>] [-lorebook <name_or_id> ...]",
     "                  Without -card, starts the newest imported card.",
     "  /rp session     Show the current session",
     "  /rp retry [-edit \"...\"]  Regenerate the last reply",
@@ -589,6 +591,8 @@ export class CommandRouter {
         });
       case "import-card":
         return this.importAsset(nctx, RP_ASSET_TYPES.CARD, options);
+      case "update-card":
+        return this.updateCard(nctx, args[0], options);
       case "import-preset":
         return this.importAsset(nctx, RP_ASSET_TYPES.PRESET, options);
       case "import-lorebook":
@@ -811,6 +815,34 @@ export class CommandRouter {
     });
   }
 
+  async updateCard(ctx, nameOrId, options) {
+    requireArg(nameOrId, "Usage: /rp update-card <name_or_id> + attachment (or -file/-url)");
+    const target = this.store.resolveAssetByNameOrId({
+      userId: ctx.userId,
+      type: RP_ASSET_TYPES.CARD,
+      nameOrId: String(nameOrId),
+    });
+    const response = await this.importAsset(ctx, RP_ASSET_TYPES.CARD, {
+      ...(options || {}),
+      replace: target.id,
+    });
+    if (response?.data) {
+      response.data.replaced_asset_id = target.id;
+    }
+    const text = String(response?.data?.text || response?.message || "");
+    const lines = [
+      "card updated successfully",
+      `- previous id: ${target.id}`,
+      ...text.split("\n").filter((line) => line && !line.toLowerCase().startsWith("card imported successfully")),
+    ];
+    return ok(lines.join("\n"), {
+      ...(response?.data || {}),
+      asset_id: target.id,
+      replaced_asset_id: target.id,
+      text: lines.join("\n"),
+    });
+  }
+
   listAssets(ctx, options) {
     const type = options?.type ? String(options.type) : undefined;
     if (type && !Object.values(RP_ASSET_TYPES).includes(type)) {
@@ -913,36 +945,32 @@ export class CommandRouter {
           nameOrId: String(cardRef),
         })
       : this.resolveDefaultStartCard(ctx);
+    const cardFull = this.store.getAssetDetail(card.id);
+    const cardTextingConfig = getTextingPersonaConfig(cardFull);
+    let statePreset = null;
 
     // Preset: use specified, or resolve "Default", or create built-in default
     let preset;
     if (presetRef) {
-      preset = this.store.resolveAssetByNameOrId({
-        userId: ctx.userId,
-        type: RP_ASSET_TYPES.PRESET,
-        nameOrId: String(presetRef),
-      });
-    } else {
-      // Try to find existing "Default" preset, or auto-create one
       try {
         preset = this.store.resolveAssetByNameOrId({
           userId: ctx.userId,
           type: RP_ASSET_TYPES.PRESET,
-          nameOrId: DEFAULT_PRESET_NAME,
+          nameOrId: String(presetRef),
         });
-      } catch {
-        // Create the built-in default preset
-        preset = this.store.createAsset({
-          userId: ctx.userId,
-          type: RP_ASSET_TYPES.PRESET,
-          name: DEFAULT_PRESET_NAME,
-          sourceFormat: "builtin",
-          rawJson: JSON.stringify(DEFAULT_PRESET),
-          extraJson: "{}",
-          contentHash: sha256(JSON.stringify(DEFAULT_PRESET)),
-        });
-        this.store.savePresetDetail(preset.id, DEFAULT_PRESET);
+      } catch (err) {
+        if (String(presetRef).trim().toLowerCase() === DEFAULT_PRESET_NAME.toLowerCase()) {
+          preset = this.resolveDefaultPreset(ctx);
+        } else {
+          statePreset = getTextingPersonaStatePreset(cardTextingConfig, presetRef);
+        }
+        if (!preset && !statePreset) {
+          throw err;
+        }
       }
+    }
+    if (!preset) {
+      preset = this.resolveDefaultPreset(ctx);
     }
 
     const lorebooks = [];
@@ -966,9 +994,11 @@ export class CommandRouter {
     });
     this.sessionManager?.updateTextingPersonaState?.(session.id, {
       type: "session_start",
+      initial_state: statePreset?.state || undefined,
+      state_preset_name: statePreset?.name || undefined,
     });
 
-    const cardDetail = this.store.getAssetDetail(card.id)?.detail || {};
+    const cardDetail = cardFull?.detail || {};
     const charName = card.name || "Character";
     const avatarUrl = resolveCardAvatarUrl(card, cardDetail);
     const introText = buildStartIntroText(charName, cardDetail);
@@ -993,12 +1023,35 @@ export class CommandRouter {
       session_id: session.id,
       card_name: charName,
       preset_name: preset.name,
+      state_preset_name: statePreset?.name || undefined,
       lorebook_names: lorebooks.map((x) => x.name),
       text: introText,
       image_url: avatarUrl || undefined,
       first_message: firstMessage,
       followup_text: firstMessage || undefined,
     });
+  }
+
+  resolveDefaultPreset(ctx) {
+    try {
+      return this.store.resolveAssetByNameOrId({
+        userId: ctx.userId,
+        type: RP_ASSET_TYPES.PRESET,
+        nameOrId: DEFAULT_PRESET_NAME,
+      });
+    } catch {
+      const preset = this.store.createAsset({
+        userId: ctx.userId,
+        type: RP_ASSET_TYPES.PRESET,
+        name: DEFAULT_PRESET_NAME,
+        sourceFormat: "builtin",
+        rawJson: JSON.stringify(DEFAULT_PRESET),
+        extraJson: "{}",
+        contentHash: sha256(JSON.stringify(DEFAULT_PRESET)),
+      });
+      this.store.savePresetDetail(preset.id, DEFAULT_PRESET);
+      return preset;
+    }
   }
 
   showSession(ctx) {
@@ -1068,6 +1121,7 @@ export class CommandRouter {
     if (stateRow) {
       lines.push(`- state updated: ${stateRow.updated_at || "(unknown)"}`);
       for (const key of [
+        "state_preset_name",
         "timezone",
         "current_location",
         "current_activity",
