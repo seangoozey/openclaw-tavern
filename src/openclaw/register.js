@@ -1552,7 +1552,7 @@ async function sendTelegramFollowup({ ctx, text, logger }) {
   const sendMessageTelegram = ctx.telegramRuntime?.sendMessageTelegram;
   if (typeof sendMessageTelegram !== "function") {
     logger?.warn?.(
-      "[openclaw-rp] telegram send unavailable: OpenClaw did not expose runtime.channel.telegram.sendMessageTelegram and no Telegram Bot API fallback is configured. Set TELEGRAM_RP_BOT_TOKEN or plugins.entries.openclaw-rp-plugin.config.telegram.botToken for text follow-ups.",
+      `[openclaw-rp] telegram send unavailable: OpenClaw did not expose runtime.channel.telegram.sendMessageTelegram and no Telegram Bot API fallback is configured. Set TELEGRAM_RP_BOT_TOKEN or plugins.entries.${OPENCLAW_RP_PLUGIN_ID}.config.telegram.botToken for text follow-ups.`,
     );
     return false;
   }
@@ -2867,9 +2867,9 @@ function resolveProviderConfig(apiConfig, overrides = {}) {
 }
 
 export default {
-  id: "openclaw-rp-plugin",
-  name: "OpenClaw RP",
-  description: "SillyTavern-compatible role-play command plugin for OpenClaw.",
+  id: OPENCLAW_RP_PLUGIN_ID,
+  name: "OpenClaw Texting Simulator",
+  description: "Persistent character texting simulator for OpenClaw with card import, owned generation, memory, schedule-aware state, proactive outreach, and multimodal tools.",
   configSchema: openclawRpPluginConfigSchema,
   register(api) {
     let db = null;
@@ -3644,19 +3644,23 @@ export default {
         id: harnessId,
         label: ownedGeneration ? "OpenClaw RP owned generation harness" : "OpenClaw RP diagnostic harness",
         supports(ctx = {}) {
-          const summary = summarizeAgentHarnessValue(ctx);
           const match = agentHarnessRunAttemptMatches(ctx);
-          api.logger?.info?.(`[openclaw-rp] agent_harness.supports diagnostic ${JSON.stringify(summary)}`);
+          if (supportsDiagnostics) {
+            const summary = summarizeAgentHarnessValue(ctx);
+            api.logger?.info?.(`[openclaw-rp] agent_harness.supports diagnostic ${JSON.stringify(summary)}`);
+          }
           if ((runAttemptDiagnostics || ownedGeneration) && match.matches) {
-            api.logger?.warn?.(
-              `[openclaw-rp] agent_harness.supports ${runAttemptDiagnostics ? "runAttempt diagnostic" : "owned generation"} claiming ${JSON.stringify(match)}`,
-            );
+            if (supportsDiagnostics || runAttemptDiagnostics) {
+              api.logger?.warn?.(
+                `[openclaw-rp] agent_harness.supports ${runAttemptDiagnostics ? "runAttempt diagnostic" : "owned generation"} claiming ${JSON.stringify(match)}`,
+              );
+            }
             return {
               supported: true,
               reason: runAttemptDiagnostics ? match.reason : "owned_generation",
             };
           }
-          if (runAttemptDiagnostics || ownedGeneration) {
+          if (supportsDiagnostics && (runAttemptDiagnostics || ownedGeneration)) {
             api.logger?.info?.(
               `[openclaw-rp] agent_harness.supports ${runAttemptDiagnostics ? "runAttempt diagnostic" : "owned generation"} skipped ${JSON.stringify(match)}`,
             );
@@ -3667,8 +3671,10 @@ export default {
           };
         },
         async runAttempt(params = {}) {
-          const summary = summarizeAgentHarnessValue(params);
-          api.logger?.warn?.(`[openclaw-rp] agent_harness.runAttempt ${runAttemptDiagnostics ? "diagnostic" : ownedGeneration ? "owned_generation" : "diagnostic"} ${JSON.stringify(summary)}`);
+          if (supportsDiagnostics || runAttemptDiagnostics) {
+            const summary = summarizeAgentHarnessValue(params);
+            api.logger?.warn?.(`[openclaw-rp] agent_harness.runAttempt ${runAttemptDiagnostics ? "diagnostic" : ownedGeneration ? "owned_generation" : "diagnostic"} ${JSON.stringify(summary)}`);
+          }
           if (runAttemptDiagnostics) {
             return buildAgentHarnessTextAttemptResult(
               params,
@@ -3708,6 +3714,10 @@ export default {
 
       if (!isRpAgentAllowed(event, ctx)) {
         logOwnedTrace("agent_not_allowed");
+        return undefined;
+      }
+      if (isAgentHarnessOwnedGenerationEnabled(api)) {
+        logOwnedTrace("skipped_agent_harness_owned_generation_active");
         return undefined;
       }
       await ensureInitialized();

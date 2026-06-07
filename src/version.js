@@ -12,5 +12,5 @@ function readPackageJson() {
 
 const packageJson = readPackageJson();
 
-export const PLUGIN_NAME = packageJson.name || "openclaw-rp-plugin";
+export const PLUGIN_NAME = packageJson.name || "texting-sim";
 export const PLUGIN_VERSION = packageJson.version || "0.0.0";

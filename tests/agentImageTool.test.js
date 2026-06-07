@@ -16,7 +16,28 @@ test("normalizeAgentImageConfig returns stable defaults", () => {
   });
 });
 
-test("getOpenClawRpPluginConfig reads nested plugin entry config", () => {
+test("getOpenClawRpPluginConfig reads nested texting-sim entry config", () => {
+  const config = getOpenClawRpPluginConfig({
+    plugins: {
+      entries: {
+        "texting-sim": {
+          config: {
+            agentImage: {
+              enabled: true,
+              provider: "gemini",
+              imageModel: "imagen-4",
+            },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(config.agentImage.provider, "gemini");
+  assert.equal(config.agentImage.imageModel, "imagen-4");
+});
+
+test("getOpenClawRpPluginConfig reads legacy openclaw-rp-plugin entry config", () => {
   const config = getOpenClawRpPluginConfig({
     plugins: {
       entries: {

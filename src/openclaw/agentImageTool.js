@@ -1,4 +1,5 @@
-export const OPENCLAW_RP_PLUGIN_ID = "openclaw-rp-plugin";
+export const OPENCLAW_RP_PLUGIN_ID = "texting-sim";
+export const OPENCLAW_RP_LEGACY_PLUGIN_IDS = ["openclaw-rp-plugin"];
 export const AGENT_IMAGE_TOOL_NAME = "rp_generate_image";
 
 export const openclawRpPluginConfigSchema = {
@@ -151,7 +152,12 @@ function asTrimmedString(value) {
 }
 
 export function getOpenClawRpPluginConfig(apiConfig) {
-  const value = apiConfig?.plugins?.entries?.[OPENCLAW_RP_PLUGIN_ID]?.config;
+  const entries = apiConfig?.plugins?.entries || {};
+  const value =
+    entries?.[OPENCLAW_RP_PLUGIN_ID]?.config ||
+    OPENCLAW_RP_LEGACY_PLUGIN_IDS.map((id) => entries?.[id]?.config).find(
+      (item) => item && typeof item === "object" && !Array.isArray(item),
+    );
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 

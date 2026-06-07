@@ -35,7 +35,7 @@ export function createRPPlugin(options = {}) {
   });
 
   return {
-    name: "openclaw-rp-plugin",
+    name: "texting-sim",
     hooks: {
       async message_received(ctx) {
         try {

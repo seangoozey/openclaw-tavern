@@ -99,7 +99,7 @@ test("llm_output hook is registered when conversation access permission is set",
         config: {
           plugins: {
             entries: {
-              "openclaw-rp-plugin": {
+              "texting-sim": {
                 hooks: {
                   allowConversationAccess: true,
                 },
@@ -182,7 +182,7 @@ test("/rp hooks-status reports configured and registered native hooks", async ()
         config: {
           plugins: {
             entries: {
-              "openclaw-rp-plugin": {
+              "texting-sim": {
                 hooks: {
                   allowConversationAccess: true,
                 },
@@ -556,6 +556,156 @@ test("agent harness owned generation routes active RP session through session ma
   } finally {
     services.get("openclaw-rp-sqlite")?.stop();
     globalThis.fetch = originalFetch;
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(assetDir, { recursive: true, force: true });
+  }
+});
+
+test("agent harness owned generation is quiet in supports when diagnostics are disabled", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const commands = new Map();
+  const services = new Map();
+  const hooks = new Map();
+  const harnesses = new Map();
+  const infoLogs = [];
+  const warnLogs = [];
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        services,
+        hooks,
+        harnesses,
+        logger: {
+          info(message) {
+            infoLogs.push(String(message || ""));
+          },
+          warn(message) {
+            warnLogs.push(String(message || ""));
+          },
+        },
+        config: {
+          plugins: {
+            entries: {
+              "openclaw-rp-plugin": {
+                config: {
+                  agentHarness: {
+                    ownedGeneration: true,
+                    runAttemptProvider: "openrouter",
+                    runAttemptModel: "z-ai/glm-4.7-flash",
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const harness = harnesses.get("openclaw-rp-owned-generation");
+    assert.ok(harness);
+    const skipped = harness.supports({
+      provider: "telegram",
+      requestedRuntime: "auto",
+    });
+    assert.equal(skipped.supported, false);
+    const supported = harness.supports({
+      provider: "openrouter",
+      modelId: "z-ai/glm-4.7-flash",
+      requestedRuntime: "auto",
+    });
+    assert.equal(supported.supported, true);
+    assert.equal(infoLogs.some((item) => item.includes("agent_harness.supports")), false);
+    assert.equal(warnLogs.some((item) => item.includes("agent_harness.supports")), false);
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("native owned hook skips when agent harness owned generation is enabled", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));
+  const commands = new Map();
+  const hooks = new Map();
+  const services = new Map();
+  const cardPath = path.join(assetDir, "nina.json");
+  await writeFile(
+    cardPath,
+    JSON.stringify({
+      name: "Nina",
+      description: "Nina answers like a dry-humored night owl.",
+      first_mes: "still up?",
+    }),
+    "utf8",
+  );
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        hooks,
+        services,
+        config: {
+          plugins: {
+            entries: {
+              "openclaw-rp-plugin": {
+                config: {
+                  nativeHooks: {
+                    beforeAgentReply: true,
+                  },
+                  agentHarness: {
+                    ownedGeneration: true,
+                    runAttemptProvider: "openrouter",
+                    runAttemptModel: "z-ai/glm-4.7-flash",
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+    assert.equal(hooks.has("before_agent_reply"), true);
+
+    const rp = commands.get("rp");
+    const baseCtx = {
+      channel: "telegram",
+      channelId: "telegram",
+      conversationId: "555",
+      senderId: "555",
+      from: "555",
+      commandBody: "",
+      sessionKey: "agent:rp:telegram:direct:555",
+    };
+    let result = await rp.handler({ ...baseCtx, commandBody: `/rp import-card --file "${cardPath}"` });
+    assert.equal(result.isError, undefined);
+    result = await rp.handler({ ...baseCtx, commandBody: "/rp start --card Nina" });
+    assert.equal(result.isError, undefined);
+
+    const hookCtx = {
+      channelId: "telegram",
+      conversationId: "555",
+      senderId: "555",
+      sessionKey: "agent:rp:telegram:direct:555",
+    };
+    await hooks.get("message_received")(
+      {
+        id: "msg-1",
+        content: "you awake?",
+        metadata: {
+          senderId: "555",
+        },
+      },
+      hookCtx,
+    );
+    const claimed = await hooks.get("before_agent_reply")({}, hookCtx);
+    assert.equal(claimed, undefined);
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
     await rm(stateDir, { recursive: true, force: true });
     await rm(assetDir, { recursive: true, force: true });
   }

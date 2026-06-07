@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-06-06
+
+### Changed
+- Rebranded the plugin as `texting-sim` / OpenClaw Texting Simulator.
+- Updated manifest, package metadata, README install/config examples, and `/rp -version` output to use the new public plugin identity.
+- Removed active ClawHub publish metadata and the `clawhub:publish` script.
+
+### Compatibility
+- Kept `openclaw-rp-plugin` as a legacy config alias for plugin config entries so existing installs can migrate without losing runtime settings.
+- Kept existing managed persona block markers unchanged for already-initialized agents.
+
 ## 2026-03-24
 
 ### Added

@@ -1,8 +1,8 @@
-# OpenClaw RP Plugin (SillyTavern Compatible)
+# OpenClaw Texting Simulator
 
 [中文 README](./README.zh.md) | [中文 Architecture](./docs/ARCHITECTURE.zh-CN.md) | [English Architecture](./docs/ARCHITECTURE.md)
 
-OpenClaw RP Plugin is a roleplay-focused OpenClaw plugin with first-class SillyTavern asset compatibility, multimodal output, and long-memory support.
+OpenClaw Texting Simulator is a persistent character texting runtime for OpenClaw. It imports character cards, owns active RP generation through the Agent Harness path, stores memory and runtime state, supports schedule-aware/proactive companion behavior, and provides multimodal tools.
 
 > Featured update: a Companion design inspired by [Generative Agents: Interactive Simulacra of Human Behavior](https://arxiv.org/abs/2304.03442), enabling long-memory-driven proactive outreach, proactive questioning, and action reporting.
 
@@ -79,7 +79,7 @@ Note: install entry names vary by gateway version (plugin manager button vs admi
 1. Open your OpenClaw admin chat (or plugin management chat).
 2. Use "Install Plugin / Install from Git" and paste this repo URL.
    - If your gateway uses command-style install, use the command shown by your gateway (a common pattern is `/plugins install <repo-url>`).
-3. Enable the plugin and verify ID `openclaw-rp-plugin`.
+3. Enable the plugin and verify ID `texting-sim`. Existing configs using `openclaw-rp-plugin` are still accepted as a legacy alias.
 4. Send `/rp help` in chat. If command list appears, installation is complete.
 
 ## 3-Min Quick Start
@@ -188,7 +188,7 @@ Add plugin config under your OpenClaw config:
 {
   "plugins": {
     "entries": {
-      "openclaw-rp-plugin": {
+      "texting-sim": {
         "hooks": {
           "allowConversationAccess": true
         },
@@ -241,7 +241,7 @@ For plugin-owned OpenRouter generation, use the OpenAI-compatible provider and a
 {
   "plugins": {
     "entries": {
-      "openclaw-rp-plugin": {
+      "texting-sim": {
         "config": {
           "provider": "openai",
           "openai": {
@@ -293,7 +293,7 @@ You can also switch it directly in native OpenClaw mode:
 /rp agent-image -enable
 ```
 
-This command updates `plugins.entries.openclaw-rp-plugin.config.agentImage` and refreshes the live in-process agent image config immediately, without restarting the gateway.
+This command updates `plugins.entries.texting-sim.config.agentImage` and refreshes the live in-process agent image config immediately, without restarting the gateway.
 
 ### Locale / i18n
 

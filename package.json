@@ -1,14 +1,14 @@
 {
-  "name": "openclaw-rp-plugin",
-  "version": "0.3.2",
-  "description": "SillyTavern-compatible roleplay plugin for OpenClaw with long memory, multimodal output, and Generative-Agents-style companion.",
-  "author": "garfeildma",
+  "name": "texting-sim",
+  "version": "0.4.0",
+  "description": "Persistent character texting simulator for OpenClaw with card import, owned generation, memory, schedule-aware state, proactive outreach, and multimodal tools.",
+  "author": "seangoozey",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/garfeildma/openclaw-tavern.git"
+    "url": "https://github.com/seangoozey/openclaw-tavern.git"
   },
-  "keywords": ["openclaw", "roleplay", "sillytavern", "companion", "tts", "image-generation", "long-memory"],
+  "keywords": ["openclaw", "texting-simulator", "roleplay", "character-cards", "companion", "tts", "image-generation", "long-memory"],
   "type": "module",
   "main": "./src/index.js",
   "exports": {
@@ -42,7 +42,6 @@
   },
   "scripts": {
     "test": "node --test",
-    "smoke": "node examples/smoke-run.js",
-    "clawhub:publish": "clawhub publish . --slug openclaw-rp-plugin --name 'OpenClaw RP Plugin' --version 0.3.2 --tags roleplay,sillytavern,companion,tts,image-generation,long-memory"
+    "smoke": "node examples/smoke-run.js"
   }
 }
