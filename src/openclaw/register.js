@@ -2328,6 +2328,26 @@ function isAgentHarnessOwnedGenerationEnabled(api) {
   return getAgentHarnessConfig(api)?.ownedGeneration === true;
 }
 
+function summarizePluginOwnedProviderConfig(apiConfig) {
+  const openclawConfig = loadOpenClawFileConfig();
+  const rootConfig = mergeConfigObjects(openclawConfig, apiConfig);
+  const pluginConfig = getOpenClawRpPluginConfig(rootConfig);
+  const provider = asString(pluginConfig.provider || pluginConfig.llm_provider || "inherit");
+  const openaiApiKey = resolveConfigString(pluginConfig.openai?.apiKey || pluginConfig.openai?.api_key, rootConfig);
+  const geminiApiKey = resolveConfigString(pluginConfig.gemini?.apiKey || pluginConfig.gemini?.api_key, rootConfig);
+  return {
+    provider,
+    hasOpenaiConfig: isObject(pluginConfig.openai),
+    openaiApiKeyConfigured: Boolean(pluginConfig.openai?.apiKey || pluginConfig.openai?.api_key),
+    openaiApiKeyResolved: Boolean(openaiApiKey),
+    openaiBaseUrlConfigured: Boolean(asString(pluginConfig.openai?.baseUrl || pluginConfig.openai?.base_url)),
+    openaiModelConfigured: Boolean(asString(pluginConfig.openai?.model || pluginConfig.openai?.model_id)),
+    hasGeminiConfig: isObject(pluginConfig.gemini),
+    geminiApiKeyConfigured: Boolean(pluginConfig.gemini?.apiKey || pluginConfig.gemini?.api_key),
+    geminiApiKeyResolved: Boolean(geminiApiKey),
+  };
+}
+
 function pickConfigValue(source, paths) {
   const values = [];
   for (const pathTokens of paths) {
@@ -3049,6 +3069,15 @@ export default {
       }
 
       const providers = resolveProviderConfig(api?.config);
+      if (isAgentHarnessOwnedGenerationEnabled(api)) {
+        api.logger?.info?.(
+          `[openclaw-rp] plugin-owned provider resolution ${JSON.stringify({
+            ...summarizePluginOwnedProviderConfig(api?.config),
+            modelProviderAvailable: Boolean(providers?.modelProvider?.generate),
+            embeddingProviderAvailable: Boolean(providers?.embeddingProvider?.embed),
+          })}`,
+        );
+      }
       agentImageToolConfig = normalizeAgentImageConfig(getOpenClawRpPluginConfig(api?.config));
       agentImageProviders = agentImageToolConfig.enabled
         ? resolveProviderConfig(api?.config, {
@@ -3383,8 +3412,9 @@ export default {
         const rpErr = asRPError(err);
         if (rpErr.code === RP_ERROR_CODES.MODEL_UNAVAILABLE) {
           const runtimeSummary = summarizeOwnedHarnessRuntimeAccess(params);
+          const pluginProviderSummary = summarizePluginOwnedProviderConfig(api?.config);
           api.logger?.warn?.(
-            `[openclaw-rp] agent_harness.owned_generation model_unavailable session=${session.id} runtime=${JSON.stringify(runtimeSummary)}`,
+            `[openclaw-rp] agent_harness.owned_generation model_unavailable session=${session.id} provider=${JSON.stringify(pluginProviderSummary)} runtime=${JSON.stringify(runtimeSummary)}`,
           );
           return buildAgentHarnessTextAttemptResult(
             params,
