@@ -271,6 +271,19 @@ function collectAgentIdCandidates(...sources) {
     if (fromSession) {
       candidates.add(fromSession);
     }
+    const fromSandboxSession = extractAgentIdFromSessionKey(source.sandboxSessionKey || source.sandbox_session_key);
+    if (fromSandboxSession) {
+      candidates.add(fromSandboxSession);
+    }
+    const fromRequesterSession = extractAgentIdFromSessionKey(
+      source.agentHarnessTaskRuntimeScope?.requesterSessionKey ||
+        source.agentHarnessTaskRuntimeScope?.requester_session_key ||
+        source.runtimeScope?.requesterSessionKey ||
+        source.runtimeScope?.requester_session_key,
+    );
+    if (fromRequesterSession) {
+      candidates.add(fromRequesterSession);
+    }
   }
   return candidates;
 }
@@ -3402,13 +3415,15 @@ export default {
       };
     }
 
-    async function runOwnedHarnessRpGeneration(params = {}) {
-      await ensureInitialized();
-      if (!sessionManager?.modelProvider?.generate) {
-        refreshPluginOwnedProviders("owned_generation_preflight");
+    function resolveActiveHarnessRpSession(params = {}) {
+      if (!store) {
+        return {
+          routerCtx: buildHarnessRouterContext(params),
+          channelSessionKey: "",
+          session: null,
+        };
       }
       const routerCtx = buildHarnessRouterContext(params);
-      const content = asString(routerCtx.content);
       const channelSessionKey = buildChannelSessionKey(routerCtx);
       let session = store?.getSessionByChannelKey?.(channelSessionKey) || null;
       if (!session) {
@@ -3423,6 +3438,37 @@ export default {
           ].filter(Boolean),
         });
       }
+      const status = asString(session?.status).toLowerCase();
+      return {
+        routerCtx,
+        channelSessionKey,
+        session: session && status === "active" ? session : null,
+        rawSession: session,
+        status,
+      };
+    }
+
+    async function runOwnedHarnessRpGeneration(params = {}) {
+      await ensureInitialized();
+      if (!isRpAgentAllowed(params)) {
+        const agentCandidates = [...collectAgentIdCandidates(params)];
+        api.logger?.info?.(
+          `[openclaw-rp] agent_harness.owned_generation agent_not_allowed agents=[${agentCandidates.join(",")}]`,
+        );
+        return buildAgentHarnessTextAttemptResult(
+          params,
+          "RP plugin is not enabled for this agent.",
+          { agentHarnessId: "openclaw-rp-owned-generation" },
+        );
+      }
+      if (!sessionManager?.modelProvider?.generate) {
+        refreshPluginOwnedProviders("owned_generation_preflight");
+      }
+      const resolved = resolveActiveHarnessRpSession(params);
+      const routerCtx = resolved.routerCtx;
+      const content = asString(routerCtx.content);
+      const channelSessionKey = resolved.channelSessionKey;
+      const session = resolved.session;
       if (!session) {
         api.logger?.warn?.(
           `[openclaw-rp] agent_harness.owned_generation no_active_session sessionKey=${asString(params.sessionKey)} channelSessionKey=${channelSessionKey}`,
@@ -3430,15 +3476,6 @@ export default {
         return buildAgentHarnessTextAttemptResult(
           params,
           "No active RP session is available for this channel. Start one with /rp start, or disable agentHarness.ownedGeneration.",
-          { agentHarnessId: "openclaw-rp-owned-generation" },
-        );
-      }
-      const status = asString(session.status).toLowerCase();
-      if (status !== "active") {
-        api.logger?.info?.(`[openclaw-rp] agent_harness.owned_generation session ${session.id} status=${status}`);
-        return buildAgentHarnessTextAttemptResult(
-          params,
-          status === "paused" ? t("session_paused") : t("session_unavailable"),
           { agentHarnessId: "openclaw-rp-owned-generation" },
         );
       }
@@ -3645,11 +3682,18 @@ export default {
         label: ownedGeneration ? "OpenClaw RP owned generation harness" : "OpenClaw RP diagnostic harness",
         supports(ctx = {}) {
           const match = agentHarnessRunAttemptMatches(ctx);
+          const agentAllowed = isRpAgentAllowed(ctx);
+          const activeRpSession = ownedGeneration ? resolveActiveHarnessRpSession(ctx).session : null;
           if (supportsDiagnostics) {
             const summary = summarizeAgentHarnessValue(ctx);
             api.logger?.info?.(`[openclaw-rp] agent_harness.supports diagnostic ${JSON.stringify(summary)}`);
           }
-          if ((runAttemptDiagnostics || ownedGeneration) && match.matches) {
+          if (
+            (runAttemptDiagnostics || ownedGeneration) &&
+            match.matches &&
+            agentAllowed &&
+            (!ownedGeneration || activeRpSession)
+          ) {
             if (supportsDiagnostics || runAttemptDiagnostics) {
               api.logger?.warn?.(
                 `[openclaw-rp] agent_harness.supports ${runAttemptDiagnostics ? "runAttempt diagnostic" : "owned generation"} claiming ${JSON.stringify(match)}`,
@@ -3662,12 +3706,24 @@ export default {
           }
           if (supportsDiagnostics && (runAttemptDiagnostics || ownedGeneration)) {
             api.logger?.info?.(
-              `[openclaw-rp] agent_harness.supports ${runAttemptDiagnostics ? "runAttempt diagnostic" : "owned generation"} skipped ${JSON.stringify(match)}`,
+              `[openclaw-rp] agent_harness.supports ${runAttemptDiagnostics ? "runAttempt diagnostic" : "owned generation"} skipped ${JSON.stringify({
+                ...match,
+                agentAllowed,
+                agentCandidates: [...collectAgentIdCandidates(ctx)],
+                activeRpSession: Boolean(activeRpSession),
+              })}`,
             );
           }
           return {
             supported: false,
-            reason: runAttemptDiagnostics || ownedGeneration ? match.reason : "diagnostic_only",
+            reason:
+              (runAttemptDiagnostics || ownedGeneration) && match.matches && !agentAllowed
+                ? "agent_not_allowed"
+                : ownedGeneration && match.matches && agentAllowed && !activeRpSession
+                  ? "no_active_rp_session"
+                : runAttemptDiagnostics || ownedGeneration
+                  ? match.reason
+                  : "diagnostic_only",
           };
         },
         async runAttempt(params = {}) {

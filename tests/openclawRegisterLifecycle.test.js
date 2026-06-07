@@ -490,12 +490,13 @@ test("agent harness owned generation routes active RP session through session ma
 
     const harness = harnesses.get("openclaw-rp-owned-generation");
     assert.ok(harness);
-    const supported = harness.supports({
+    const beforeSession = harness.supports({
       provider: "rp-harness-test",
       modelId: "test-chat",
+      sessionKey: "agent:rp:telegram:direct:555",
     });
-    assert.equal(supported.supported, true);
-    assert.equal(supported.reason, "owned_generation");
+    assert.equal(beforeSession.supported, false);
+    assert.equal(beforeSession.reason, "no_active_rp_session");
 
     const rp = commands.get("rp");
     const baseCtx = {
@@ -517,6 +518,18 @@ test("agent harness owned generation routes active RP session through session ma
       commandBody: "/rp start --card Nina",
     });
     assert.equal(result.isError, undefined);
+
+    const supported = harness.supports({
+      provider: "rp-harness-test",
+      modelId: "test-chat",
+      sessionKey: "agent:rp:telegram:direct:555",
+      messageProvider: "telegram",
+      messageTo: "telegram:555",
+      currentChannelId: "telegram:555",
+      senderId: "555",
+    });
+    assert.equal(supported.supported, true);
+    assert.equal(supported.reason, "owned_generation");
 
     const payload = await harness.runAttempt({
       sessionId: "openclaw-session-1",
@@ -616,12 +629,167 @@ test("agent harness owned generation is quiet in supports when diagnostics are d
       modelId: "z-ai/glm-4.7-flash",
       requestedRuntime: "auto",
     });
-    assert.equal(supported.supported, true);
+    assert.equal(supported.supported, false);
+    assert.equal(supported.reason, "no_active_rp_session");
     assert.equal(infoLogs.some((item) => item.includes("agent_harness.supports")), false);
     assert.equal(warnLogs.some((item) => item.includes("agent_harness.supports")), false);
   } finally {
     services.get("openclaw-rp-sqlite")?.stop();
     await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("agent harness owned generation respects allowedAgents before claiming", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const commands = new Map();
+  const services = new Map();
+  const hooks = new Map();
+  const harnesses = new Map();
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        services,
+        hooks,
+        harnesses,
+        config: {
+          plugins: {
+            entries: {
+              "texting-sim": {
+                config: {
+                  allowedAgents: ["rp"],
+                  agentHarness: {
+                    ownedGeneration: true,
+                    runAttemptProvider: "openrouter",
+                    runAttemptModel: "z-ai/glm-4.7-flash",
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const harness = harnesses.get("openclaw-rp-owned-generation");
+    assert.ok(harness);
+
+    assert.deepEqual(
+      harness.supports({
+        provider: "openrouter",
+        modelId: "z-ai/glm-4.7-flash",
+        sessionKey: "agent:main:telegram:direct:555",
+      }),
+      {
+        supported: false,
+        reason: "agent_not_allowed",
+      },
+    );
+
+    assert.deepEqual(
+      harness.supports({
+        provider: "openrouter",
+        modelId: "z-ai/glm-4.7-flash",
+      }),
+      {
+        supported: false,
+        reason: "agent_not_allowed",
+      },
+    );
+
+    const noSession = harness.supports({
+      provider: "openrouter",
+      modelId: "z-ai/glm-4.7-flash",
+      sandboxSessionKey: "agent:rp:telegram:direct:555",
+    });
+    assert.equal(noSession.supported, false);
+    assert.equal(noSession.reason, "no_active_rp_session");
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("agent harness owned generation claims allowed agent only during active RP session", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));
+  const commands = new Map();
+  const services = new Map();
+  const hooks = new Map();
+  const harnesses = new Map();
+  const cardPath = path.join(assetDir, "nina.json");
+  await writeFile(
+    cardPath,
+    JSON.stringify({
+      name: "Nina",
+      description: "Nina answers like a dry-humored night owl.",
+      first_mes: "still up?",
+    }),
+    "utf8",
+  );
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        services,
+        hooks,
+        harnesses,
+        config: {
+          plugins: {
+            entries: {
+              "texting-sim": {
+                config: {
+                  allowedAgents: ["rp"],
+                  agentHarness: {
+                    ownedGeneration: true,
+                    runAttemptProvider: "openrouter",
+                    runAttemptModel: "z-ai/glm-4.7-flash",
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const harness = harnesses.get("openclaw-rp-owned-generation");
+    assert.ok(harness);
+
+    const baseCtx = {
+      channel: "telegram",
+      channelId: "telegram",
+      conversationId: "555",
+      senderId: "555",
+      from: "555",
+      commandBody: "",
+      sessionKey: "agent:rp:telegram:direct:555",
+    };
+    const rp = commands.get("rp");
+    let result = await rp.handler({ ...baseCtx, commandBody: `/rp import-card --file "${cardPath}"` });
+    assert.equal(result.isError, undefined);
+    result = await rp.handler({ ...baseCtx, commandBody: "/rp start --card Nina" });
+    assert.equal(result.isError, undefined);
+
+    const supported = harness.supports({
+      provider: "openrouter",
+      modelId: "z-ai/glm-4.7-flash",
+      sandboxSessionKey: "agent:rp:telegram:direct:555",
+      messageProvider: "telegram",
+      messageTo: "telegram:555",
+      currentChannelId: "telegram:555",
+      senderId: "555",
+    });
+    assert.equal(supported.supported, true);
+    assert.equal(supported.reason, "owned_generation");
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(assetDir, { recursive: true, force: true });
   }
 });
 
