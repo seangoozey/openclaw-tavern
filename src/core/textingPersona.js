@@ -355,14 +355,28 @@ export function getTextingPersonaStatePreset(config, presetName) {
           : preset.default_state && typeof preset.default_state === "object" && !Array.isArray(preset.default_state)
             ? preset.default_state
             : preset;
+      const scheduleMode = normalizeStatePresetScheduleMode(
+        preset.schedule_mode || preset.scheduleMode || preset.mode,
+      );
+      const normalizedState = normalizeStatePatch(state);
       return {
         name: key,
         description: typeof preset.description === "string" ? preset.description : "",
-        state: normalizeStatePatch(state),
+        scheduleMode,
+        pinnedFields: scheduleMode === "pin" ? Object.keys(normalizedState) : [],
+        state: normalizedState,
       };
     }
   }
   return null;
+}
+
+function normalizeStatePresetScheduleMode(value) {
+  const mode = String(value || "merge").trim().toLowerCase();
+  if (["merge", "pin", "suspend"].includes(mode)) {
+    return mode;
+  }
+  return "merge";
 }
 
 function parseClock(value) {
@@ -676,12 +690,36 @@ export function ensureTextingPersonaState({ store, sessionId, card, event, now =
   let state = normalizeState({ ...(stored || {}), ...initialState }, config);
   if (!existing && event?.type === "session_start" && event.state_preset_name) {
     state.state_preset_name = String(event.state_preset_name);
+    state.state_preset_schedule_mode = normalizeStatePresetScheduleMode(event.state_preset_schedule_mode);
+    if (state.state_preset_schedule_mode === "pin") {
+      state.state_preset_pinned_fields = Array.isArray(event.state_preset_pinned_fields)
+        ? event.state_preset_pinned_fields.map((key) => String(key)).filter(Boolean)
+        : Object.keys(initialState);
+      state.state_preset_pinned_state = { ...initialState };
+    }
   }
   const runtimeClock = buildRuntimeClock({
     now,
     timeZone: config?.timezone || config?.schedule?.timezone,
   });
-  state = applyTimeState(state, config, now);
+  if (state.state_preset_schedule_mode !== "suspend") {
+    state = applyTimeState(state, config, now);
+  }
+  if (
+    state.state_preset_schedule_mode === "pin" &&
+    state.state_preset_pinned_state &&
+    typeof state.state_preset_pinned_state === "object" &&
+    !Array.isArray(state.state_preset_pinned_state)
+  ) {
+    const pinnedFields = Array.isArray(state.state_preset_pinned_fields)
+      ? new Set(state.state_preset_pinned_fields)
+      : null;
+    for (const [key, value] of Object.entries(state.state_preset_pinned_state)) {
+      if (!pinnedFields || pinnedFields.has(key)) {
+        state[key] = value;
+      }
+    }
+  }
   state = applyTurnEvent(state, event, now);
   state.last_evaluated_at = now.toISOString();
   state.runtime_clock = runtimeClock;

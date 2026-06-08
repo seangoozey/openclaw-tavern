@@ -48,7 +48,8 @@ Current state to resume from:
 - `/rp model` is implemented for model iteration. It stores the plugin-owned chat model override in SQLite table `rp_runtime_settings`; `/rp model -clear` returns to the configured default. Provider/API key config still belongs in `openclaw.json`/env.
 - Recommended harness config for flexible model iteration: keep `agentHarness.runAttemptProvider` set, omit `agentHarness.runAttemptModel` unless a narrower claim filter is needed, and change the generation model with `/rp model -model <id>`.
 - `/rp start -preset <name>` now supports card-authored texting state presets from `data.extensions["openclaw/texting_persona"].state_presets` when no imported generation preset matches that name. These presets are session-start overlays for testing alternate default states; they do not mutate the card or existing sessions. Sarah's local draft card has `normal`, `busy_library`, `late_night_playful`, and `guarded_reset` test presets.
-- Last verification: `npm test` passed with 138/138 tests after adding no-name `/rp update-card` matching and caption/media fallback support for `/rp update-card`.
+- State presets now support `schedule_mode`. `merge` is the default and allows schedule to overwrite preset fields. `pin` reapplies the preset's explicit fields after schedule evaluation on each state update, making test presets such as `busy_library` and `late_night_playful` survive the live clock. `suspend` skips schedule application while the preset metadata remains active.
+- Last verification: `npm test` passed with 138/138 tests after adding state preset `schedule_mode` pinning and documentation.
 
 Next live checks:
 
@@ -453,6 +454,24 @@ Verify in OpenClaw `v2026.5.27-beta.1` running in Linux Docker:
 - Telegram fallback token `TELEGRAM_RP_BOT_TOKEN` works when native send API is unavailable
 - required hook permissions are documented and present in `openclaw.json`
 - runtime clock prevents false explicit time claims. Failed once live; needs stronger enforcement.
+
+### 15. README Overhaul
+
+Status: planned.
+
+The README has grown feature-by-feature and needs a full documentation pass. It should become the main operator guide for the current `texting-sim` architecture instead of a light quick-start.
+
+Needed sections:
+
+- Plugin purpose and architecture: OpenClaw host/controller, plugin-owned character runtime.
+- Installation and config examples for `texting-sim`, including legacy alias notes.
+- Provider setup, owned generation, OpenRouter/OpenAI-compatible config, and `/rp model`.
+- Telegram setup, `TELEGRAM_RP_BOT_TOKEN`, captioned-file command behavior, and container reload expectations.
+- Complete `/rp` command reference.
+- Card import/update workflow, PNG JSON embedding, and `/rp update-card [name_or_id]`.
+- Texting persona extension overview with `default_state`, `state_presets`, `schedule_mode`, schedule, availability, proactive texting, and state ranges such as `trust_in_user` / `flirt_comfort`.
+- Debugging guide: `/rp state`, `/rp debug`, `/rp hooks-status`, logs, and common failures.
+- Testing/development guide: `npm test`, card update scripts, Docker smoke checks.
 
 ## Maintenance Rule
 

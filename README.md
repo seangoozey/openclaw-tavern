@@ -137,6 +137,38 @@ Note: install entry names vary by gateway version (plugin manager button vs admi
 - `/rp restore-agent-persona` - remove legacy RP character preset from `SOUL.md`, restore original persona
 - `/rp pause` / `/rp resume` / `/rp end`
 
+## Texting State Presets
+
+Texting persona cards can define alternate starting states under `data.extensions["openclaw/texting_persona"].state_presets`.
+
+```json
+{
+  "state_presets": {
+    "busy_library": {
+      "description": "Start distracted while studying.",
+      "schedule_mode": "pin",
+      "state": {
+        "current_location": "library",
+        "current_activity": "studying",
+        "attention_level": "distracted",
+        "emotional_state": "stressed",
+        "trust_in_user": 4,
+        "flirt_comfort": 0,
+        "relationship_temperature": "cool"
+      }
+    }
+  }
+}
+```
+
+Start with a card state preset:
+
+```text
+/rp start -card Sarah -preset busy_library
+```
+
+If an imported generation preset and a card state preset share a name, the imported generation preset wins. `schedule_mode: "pin"` keeps the preset's explicit state fields from being immediately overwritten by the live schedule. `trust_in_user` and `flirt_comfort` are integer `0-100` runtime values; the plugin clamps both ranges.
+
 ## Card Iteration
 
 To update a PNG character card from a local JSON draft while preserving the PNG image:

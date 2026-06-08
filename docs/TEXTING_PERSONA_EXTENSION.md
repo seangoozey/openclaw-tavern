@@ -122,9 +122,23 @@ If an imported generation preset and a card state preset share the same name, th
 ```ts
 type TextingPersonaStatePreset = {
   description?: string;
+  schedule_mode?: "merge" | "pin" | "suspend";
   state?: Partial<TextingPersonaState>;
 };
 ```
+
+`schedule_mode` controls how the runtime schedule interacts with the preset:
+
+- `merge`: default behavior. The preset seeds the session, then normal schedule windows may overwrite location, activity, attention, mood, or other scheduled fields.
+- `pin`: the preset's explicit `state` fields are reapplied after schedule evaluation on each state update. This is useful for testing a specific starting condition such as `busy_library` or `late_night_playful` without the live clock immediately replacing it.
+- `suspend`: skips schedule application for the session while the preset metadata remains active. Use sparingly because it removes ordinary schedule pressure.
+
+When `pin` is used, the runtime stores debug metadata such as `state_preset_name`, `state_preset_schedule_mode`, `state_preset_pinned_fields`, and `state_preset_pinned_state` in session state. `/rp state` reports the active preset name and schedule mode.
+
+Numeric state ranges:
+
+- `trust_in_user`: integer clamped to `0-100`. Low values keep the character cautious; higher values make warmth, vulnerability, and receptive continuity more plausible.
+- `flirt_comfort`: integer clamped to `0-100`. It does not replace trust; the runtime currently only increases flirt comfort from user flirtation when trust is at least `15`, and relationship temperature shifts toward `charged` around `30+`.
 
 Example:
 
@@ -133,6 +147,7 @@ Example:
   "state_presets": {
     "busy_library": {
       "description": "Start Sarah distracted while studying.",
+      "schedule_mode": "pin",
       "state": {
         "current_location": "library",
         "current_activity": "studying",

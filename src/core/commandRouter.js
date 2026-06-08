@@ -1025,6 +1025,8 @@ export class CommandRouter {
       type: "session_start",
       initial_state: statePreset?.state || undefined,
       state_preset_name: statePreset?.name || undefined,
+      state_preset_schedule_mode: statePreset?.scheduleMode || undefined,
+      state_preset_pinned_fields: statePreset?.pinnedFields || undefined,
     });
 
     const cardDetail = cardFull?.detail || {};
@@ -1151,6 +1153,7 @@ export class CommandRouter {
       lines.push(`- state updated: ${stateRow.updated_at || "(unknown)"}`);
       for (const key of [
         "state_preset_name",
+        "state_preset_schedule_mode",
         "timezone",
         "current_location",
         "current_activity",

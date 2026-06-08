@@ -376,6 +376,7 @@ function textingCardPayload() {
           state_presets: {
             anxious: {
               description: "Test preset for a guarded, distracted start.",
+              schedule_mode: "pin",
               state: {
                 current_location: "library",
                 current_activity: "studying",
@@ -402,12 +403,12 @@ function textingCardPayload() {
           },
           schedule: {
             day_rhythm: {
-              evening: {
-                time: "17:00-22:30",
-                location: "dorm_room",
-                activity: "avoiding_homework",
-                attention: "casually_available",
-                mood: "playful",
+              always: {
+                time: "00:00-23:59",
+                location: "class",
+                activity: "half_listening_in_class",
+                attention: "sneaking_texts",
+                mood: "normal",
               },
             },
           },
@@ -494,12 +495,18 @@ test("start can use card texting persona state preset", async () => {
   const stateRow = plugin.services.store.getSessionState(sessionId);
   const state = JSON.parse(stateRow.state_json);
   assert.equal(state.state_preset_name, "anxious");
+  assert.equal(state.state_preset_schedule_mode, "pin");
   assert.equal(state.test_marker, "preset_anxious");
+  assert.equal(state.current_location, "library");
+  assert.equal(state.current_activity, "studying");
+  assert.equal(state.attention_level, "distracted");
+  assert.equal(state.emotional_state, "anxious");
   assert.equal(state.trust_in_user, 2);
 
   const debug = await plugin.hooks.message_received(makeCtx("/rp state"));
   assert.equal(debug.response.ok, true);
   assert.match(debug.response.data.text, /state_preset_name: anxious/);
+  assert.match(debug.response.data.text, /state_preset_schedule_mode: pin/);
 });
 
 test("texting persona companion nudge returns direct text without generic blocks", async () => {
