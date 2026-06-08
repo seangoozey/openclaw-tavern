@@ -1033,7 +1033,7 @@ function escapeQuotedArg(value) {
   return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-function parseImportInjectPlan(commandBody) {
+function parseFileBackedCommandInjectPlan(commandBody) {
   let parsed;
   try {
     parsed = parseRpCommand(commandBody);
@@ -1044,7 +1044,7 @@ function parseImportInjectPlan(commandBody) {
     return null;
   }
 
-  if (!["import-card", "import-preset", "import-lorebook"].includes(parsed.command)) {
+  if (!["import-card", "import-preset", "import-lorebook", "update-card"].includes(parsed.command)) {
     return null;
   }
 
@@ -1110,7 +1110,7 @@ async function findLatestInboundMediaPath({ inboundMediaDir, maxAgeMs, usedPaths
 }
 
 async function tryInjectImportFile(commandBody, ctx, mediaCache, options = {}) {
-  const parsed = parseImportInjectPlan(commandBody);
+  const parsed = parseFileBackedCommandInjectPlan(commandBody);
   if (!parsed) {
     return commandBody;
   }
@@ -1168,9 +1168,15 @@ async function tryInjectImportFile(commandBody, ctx, mediaCache, options = {}) {
 }
 
 function buildImportMissingAttachmentHint(commandBody) {
-  const parsed = parseImportInjectPlan(commandBody);
+  const parsed = parseFileBackedCommandInjectPlan(commandBody);
   if (!parsed) {
     return null;
+  }
+  if (parsed.command === "update-card") {
+    return [
+      "Update command needs one attachment (or --url / --file).",
+      "If you are on Telegram native slash command, send the file first, then run the update-card command.",
+    ].join(" ");
   }
   return [
     "Import command needs one attachment (or --url / --file).",

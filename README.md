@@ -110,7 +110,7 @@ Note: install entry names vary by gateway version (plugin manager button vs admi
 
 - `/rp help`
 - `/rp import-card` / `/rp import-preset` / `/rp import-lorebook`
-- `/rp update-card <name_or_id> + attachment (or -file/-url)`
+- `/rp update-card [name_or_id] + attachment (or -file/-url)`
 - `/rp list-assets [-type card|preset|lorebook] [-search "..."] [-page N]`
 - `/rp show-asset <name_or_id>`
 - `/rp delete-asset <id> -confirm`
@@ -153,9 +153,10 @@ To update the card already imported into the plugin engine:
 ```bash
 /rp update-card Sarah -file /path/to/SarahMiller.json
 /rp update-card card_abc123 -file /path/to/SarahMiller.png
+/rp update-card -file /path/to/SarahMiller.json
 ```
 
-This replaces the existing card asset in plugin storage while keeping its asset id.
+This replaces the existing card asset in plugin storage while keeping its asset id. If `name_or_id` is omitted, the plugin matches the existing card by the incoming card's own name.
 
 ## Companion Quick Examples
 

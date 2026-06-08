@@ -1438,6 +1438,104 @@ test("/rp debug writes trace file under active agent workspace debug directory",
   }
 });
 
+test("captioned media fallback injects file for update-card command", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const mediaDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-media-"));
+  const commands = new Map();
+  const hooks = new Map();
+  const services = new Map();
+  const timers = [];
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  globalThis.setInterval = (fn) => {
+    timers.push(fn);
+    return { testTimer: timers.length };
+  };
+  globalThis.clearInterval = () => {};
+
+  const originalCardPath = path.join(mediaDir, "nina-original.json");
+  const updatedCardPath = path.join(mediaDir, "nina-updated.json");
+  await writeFile(originalCardPath, JSON.stringify({ name: "Nina", description: "old role" }), "utf8");
+  await writeFile(updatedCardPath, JSON.stringify({ name: "Nina", description: "new role" }), "utf8");
+
+  try {
+    registerModule.register(makeApi({
+      stateDir,
+      hooks,
+      commands,
+      services,
+      config: {
+        runtime: {
+          inboundMediaDir: mediaDir,
+        },
+      },
+    }));
+
+    const rp = commands.get("rp");
+    assert.ok(rp);
+
+    let result = await rp.handler({
+      channel: "telegram",
+      channelId: "telegram",
+      conversationId: "555",
+      senderId: "u1",
+      from: "u1",
+      commandBody: `/rp import-card --file "${originalCardPath}"`,
+    });
+    assert.equal(result.isError, undefined);
+    assert.match(result.text, /card_/);
+    const cardId = result.text.match(/card_[A-Za-z0-9_-]+/)?.[0];
+    assert.ok(cardId);
+
+    await hooks.get("message_received")(
+      {
+        id: "media-1",
+        content: "/rp update-card card_W8BKmSym",
+        from: "u1",
+        metadata: {
+          senderId: "u1",
+          filePath: updatedCardPath,
+          mediaType: "document",
+          to: "555",
+        },
+      },
+      {
+        channelId: "telegram",
+        conversationId: "555",
+        senderId: "u1",
+      },
+    );
+
+    result = await rp.handler({
+      channel: "telegram",
+      channelId: "telegram",
+      conversationId: "555",
+      senderId: "u1",
+      from: "u1",
+      commandBody: `/rp update-card ${cardId}`,
+    });
+    assert.equal(result.isError, undefined);
+    assert.match(result.text, /card updated successfully/);
+
+    result = await rp.handler({
+      channel: "telegram",
+      channelId: "telegram",
+      conversationId: "555",
+      senderId: "u1",
+      from: "u1",
+      commandBody: `/rp show-asset ${cardId}`,
+    });
+    assert.equal(result.isError, undefined);
+    assert.match(result.text, /new role/);
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(mediaDir, { recursive: true, force: true });
+  }
+});
+
 test("owned native RP hook claims active session turn and caches duplicate hooks", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
   const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));

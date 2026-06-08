@@ -173,7 +173,7 @@ function helpText() {
     "",
     "Import",
     "  /rp import-card + attachment (or -url/-file)",
-    "  /rp update-card <name_or_id> + attachment (or -url/-file)",
+    "  /rp update-card [name_or_id] + attachment (or -url/-file)",
     "  /rp import-preset + attachment (or -url/-file)",
     "  /rp import-lorebook + attachment (or -url/-file)",
     "  Tip: send a file first, then run /rp import-* if your channel supports attachment fallback.",
@@ -374,6 +374,47 @@ function buildStartIntroText(cardName, cardDetail) {
   lines.push("Send a message to start chatting.");
 
   return lines.join("\n");
+}
+
+function parseImportedAssetPayload(type, attachment) {
+  let imported;
+  if (type === RP_ASSET_TYPES.CARD) {
+    imported = importCardFromAttachment(attachment);
+    const lower = String(attachment.filename || "").toLowerCase();
+    if (lower.endsWith(".png")) {
+      const avatarDataUrl = `data:image/png;base64,${attachment.buffer.toString("base64")}`;
+      imported.extra = {
+        ...(imported.extra || {}),
+        openclaw: {
+          ...((imported.extra && imported.extra.openclaw) || {}),
+          avatar_data_url: avatarDataUrl,
+          ...(attachment.path ? { avatar_media_path: String(attachment.path) } : {}),
+        },
+      };
+    }
+  } else if (type === RP_ASSET_TYPES.PRESET) {
+    imported = importPresetFromAttachment(attachment);
+  } else {
+    imported = importLorebookFromAttachment(attachment);
+  }
+
+  const name =
+    imported.card?.name ||
+    imported.raw?.name ||
+    imported.raw?.data?.name ||
+    imported.raw?.title ||
+    attachment.filename.replace(/\.[^.]+$/, "");
+
+  const rawJson = JSON.stringify(imported.raw || {});
+  const extraJson = JSON.stringify(imported.extra || {});
+  return {
+    attachment,
+    imported,
+    name,
+    rawJson,
+    extraJson,
+    contentHash: sha256(rawJson),
+  };
 }
 
 /**
@@ -705,40 +746,13 @@ export class CommandRouter {
       filename: attachment.filename,
     });
 
+    const payload = parseImportedAssetPayload(type, attachment);
+    return this.saveImportedAsset(ctx, type, payload, options);
+  }
+
+  saveImportedAsset(ctx, type, payload, options) {
+    const { attachment, imported, name, rawJson, extraJson, contentHash } = payload;
     const replaceId = options?.replace ? String(options.replace) : null;
-
-    let imported;
-    if (type === RP_ASSET_TYPES.CARD) {
-      imported = importCardFromAttachment(attachment);
-      const lower = String(attachment.filename || "").toLowerCase();
-      if (lower.endsWith(".png")) {
-        // Extract avatar from PNG as data URL
-        const avatarDataUrl = `data:image/png;base64,${attachment.buffer.toString("base64")}`;
-        imported.extra = {
-          ...(imported.extra || {}),
-          openclaw: {
-            ...((imported.extra && imported.extra.openclaw) || {}),
-            avatar_data_url: avatarDataUrl,
-            ...(attachment.path ? { avatar_media_path: String(attachment.path) } : {}),
-          },
-        };
-      }
-    } else if (type === RP_ASSET_TYPES.PRESET) {
-      imported = importPresetFromAttachment(attachment);
-    } else {
-      imported = importLorebookFromAttachment(attachment);
-    }
-
-    const name =
-      imported.card?.name ||
-      imported.raw?.name ||
-      imported.raw?.data?.name ||
-      imported.raw?.title ||
-      attachment.filename.replace(/\.[^.]+$/, "");
-
-    const rawJson = JSON.stringify(imported.raw || {});
-    const extraJson = JSON.stringify(imported.extra || {});
-    const contentHash = sha256(rawJson);
     const duplicate = this.store.findAssetByHash?.({
       userId: ctx.userId,
       type,
@@ -816,13 +830,27 @@ export class CommandRouter {
   }
 
   async updateCard(ctx, nameOrId, options) {
-    requireArg(nameOrId, "Usage: /rp update-card <name_or_id> + attachment (or -file/-url)");
+    const attachment = await resolveImportAttachment(ctx, options);
+    if (!attachment) {
+      throw new RPError(
+        RP_ERROR_CODES.ATTACHMENT_MISSING,
+        "Update command needs one attachment (or -file/-url)",
+      );
+    }
+    this.sessionManager?.logger?.info?.("rp.import.start", {
+      user_id: ctx.userId,
+      type: RP_ASSET_TYPES.CARD,
+      filename: attachment.filename,
+    });
+    const payload = parseImportedAssetPayload(RP_ASSET_TYPES.CARD, attachment);
+    const targetRef = nameOrId ? String(nameOrId) : payload.name;
+    requireArg(targetRef, "Usage: /rp update-card [name_or_id] + attachment (or -file/-url)");
     const target = this.store.resolveAssetByNameOrId({
       userId: ctx.userId,
       type: RP_ASSET_TYPES.CARD,
-      nameOrId: String(nameOrId),
+      nameOrId: targetRef,
     });
-    const response = await this.importAsset(ctx, RP_ASSET_TYPES.CARD, {
+    const response = this.saveImportedAsset(ctx, RP_ASSET_TYPES.CARD, payload, {
       ...(options || {}),
       replace: target.id,
     });
@@ -833,8 +861,9 @@ export class CommandRouter {
     const lines = [
       "card updated successfully",
       `- previous id: ${target.id}`,
+      nameOrId ? null : `- matched by card name: ${payload.name}`,
       ...text.split("\n").filter((line) => line && !line.toLowerCase().startsWith("card imported successfully")),
-    ];
+    ].filter(Boolean);
     return ok(lines.join("\n"), {
       ...(response?.data || {}),
       asset_id: target.id,

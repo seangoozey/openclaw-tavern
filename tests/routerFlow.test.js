@@ -209,6 +209,59 @@ test("update-card replaces an imported engine card", async () => {
   }
 });
 
+test("update-card can infer target from incoming card name", async () => {
+  const plugin = createRPPlugin({
+    modelProvider: {
+      async generate() {
+        return { content: "assistant reply" };
+      },
+    },
+  });
+
+  const dir = await mkdtemp(path.join(os.tmpdir(), "rp-update-card-infer-"));
+  const file = path.join(dir, "alice-v2.json");
+  await writeFile(
+    file,
+    JSON.stringify({
+      spec: "chara_card_v3",
+      spec_version: "3.0",
+      data: {
+        name: "Alice",
+        description: "new inferred role",
+        group_only_greetings: [],
+      },
+    }),
+    "utf8",
+  );
+
+  try {
+    let result = await plugin.hooks.message_received(
+      makeCtx("/rp import-card", {
+        attachments: [
+          {
+            filename: "alice.json",
+            buffer: Buffer.from(JSON.stringify({ name: "Alice", description: "old role" })),
+          },
+        ],
+      }),
+    );
+    assert.equal(result.response.ok, true);
+    const cardId = result.response.data.asset_id;
+
+    result = await plugin.hooks.message_received(makeCtx(`/rp update-card -file "${file}"`));
+    assert.equal(result.response.ok, true);
+    assert.equal(result.response.data.asset_id, cardId);
+    assert.match(result.response.message, /matched by card name: Alice/);
+
+    result = await plugin.hooks.message_received(makeCtx(`/rp show-asset ${cardId}`));
+    assert.equal(result.response.ok, true);
+    assert.match(result.response.message, /Alice/);
+    assert.match(result.response.message, /new inferred role/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("companion nudge returns proactive message blocks", async () => {
   const plugin = createRPPlugin({
     modelProvider: {

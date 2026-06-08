@@ -48,7 +48,7 @@ Current state to resume from:
 - `/rp model` is implemented for model iteration. It stores the plugin-owned chat model override in SQLite table `rp_runtime_settings`; `/rp model -clear` returns to the configured default. Provider/API key config still belongs in `openclaw.json`/env.
 - Recommended harness config for flexible model iteration: keep `agentHarness.runAttemptProvider` set, omit `agentHarness.runAttemptModel` unless a narrower claim filter is needed, and change the generation model with `/rp model -model <id>`.
 - `/rp start -preset <name>` now supports card-authored texting state presets from `data.extensions["openclaw/texting_persona"].state_presets` when no imported generation preset matches that name. These presets are session-start overlays for testing alternate default states; they do not mutate the card or existing sessions. Sarah's local draft card has `normal`, `busy_library`, `late_night_playful`, and `guarded_reset` test presets.
-- Last verification: `npm test` passed with 136/136 tests after adding card-authored state presets for `/rp start -preset <name>`.
+- Last verification: `npm test` passed with 138/138 tests after adding no-name `/rp update-card` matching and caption/media fallback support for `/rp update-card`.
 
 Next live checks:
 
@@ -431,7 +431,8 @@ Implemented:
 - `npm run card:update-png -- --png <card.png> --json <card.json> [--out <card.png>]` remains available for explicit paths.
 - The script writes the standard `ccv3` tEXt chunk and, by default, legacy `chara` metadata for older plugin/container builds.
 - Preserve the PNG image data while replacing card metadata.
-- `/rp update-card <name_or_id>` replaces an imported engine card from an attachment, `-file`, or `-url`, keeping the same asset id so existing references can pick up the updated card detail.
+- `/rp update-card [name_or_id]` replaces an imported engine card from an attachment, `-file`, or `-url`, keeping the same asset id so existing references can pick up the updated card detail. If `name_or_id` is omitted, it resolves the target from the incoming card's own name.
+- Native Telegram caption/media fallback now treats `/rp update-card` as a file-backed command. Before this fix, a captioned file with `/rp update-card card_id` could still reach the router without an attachment because only import commands were eligible for cached media injection.
 
 ### 14. Docker Smoke Test
 
