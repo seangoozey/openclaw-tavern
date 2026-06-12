@@ -212,6 +212,76 @@ test("/rp hooks-status reports configured and registered native hooks", async ()
   }
 });
 
+test("before_tool_call blocks base tools during active RP session only", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));
+  const commands = new Map();
+  const hooks = new Map();
+  const services = new Map();
+  const cardPath = path.join(assetDir, "nina.json");
+  await writeFile(
+    cardPath,
+    JSON.stringify({
+      name: "Nina",
+      description: "Nina answers like a dry-humored night owl.",
+      first_mes: "still up?",
+    }),
+    "utf8",
+  );
+
+  try {
+    registerModule.register(makeApi({ stateDir, commands, hooks, services }));
+
+    assert.ok(hooks.has("before_tool_call"));
+    const rp = commands.get("rp");
+    const baseCtx = {
+      channel: "telegram",
+      channelId: "telegram",
+      conversationId: "555",
+      senderId: "555",
+      from: "555",
+      commandBody: "",
+      sessionKey: "agent:rp:telegram:direct:555",
+    };
+
+    let toolResult = await hooks.get("before_tool_call")(
+      { toolName: "image", params: { image: "https://example.com/a.jpg" } },
+      {
+        channelId: "telegram",
+        conversationId: "555",
+        senderId: "555",
+        sessionKey: "agent:rp:telegram:direct:555",
+      },
+    );
+    assert.equal(toolResult, undefined);
+
+    let result = await rp.handler({ ...baseCtx, commandBody: `/rp import-card --file "${cardPath}"` });
+    assert.equal(result.isError, undefined);
+    result = await rp.handler({ ...baseCtx, commandBody: "/rp start --card Nina" });
+    assert.equal(result.isError, undefined);
+
+    toolResult = await hooks.get("before_tool_call")(
+      { toolName: "image", params: { image: "https://example.com/a.jpg" } },
+      {
+        channelId: "telegram",
+        conversationId: "555",
+        senderId: "555",
+        sessionKey: "agent:rp:telegram:direct:555",
+      },
+    );
+    assert.equal(toolResult.block, true);
+    assert.match(toolResult.blockReason, /Active RP session/);
+
+    result = await rp.handler({ ...baseCtx, commandBody: "/rp hooks-status" });
+    assert.equal(result.isError, undefined);
+    assert.match(result.text, /before_tool_call: configured=yes registered=yes/);
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(assetDir, { recursive: true, force: true });
+  }
+});
+
 test("agent harness diagnostics registers a non-claiming harness when enabled", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
   const commands = new Map();

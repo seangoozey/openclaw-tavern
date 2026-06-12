@@ -6,6 +6,7 @@ import {
   buildTextingPersonaFallbackMessage,
   decideTextingPersonaAvailability,
   ensureTextingPersonaState,
+  evaluateConversationContinuity,
   normalizeTextingPersonaOutput,
 } from "../src/core/textingPersona.js";
 import { InMemoryStore } from "../src/store/inMemoryStore.js";
@@ -201,6 +202,135 @@ test("texting persona prompt includes authoritative runtime clock", () => {
   assert.match(prompt, /local_weekday: wednesday/);
   assert.match(prompt, /next_friday_date: 2026-06-05/);
   assert.match(prompt, /This clock is authoritative/);
+});
+
+test("texting persona state records elapsed time and schedule transition context", () => {
+  const store = new InMemoryStore();
+  const card = store.createAsset({
+    userId: "u1",
+    type: "card",
+    name: "Maya Chen",
+    sourceFormat: "chara_card_v2",
+    rawJson: JSON.stringify({
+      spec: "chara_card_v2",
+      spec_version: "2.0",
+      data: {
+        name: "Maya Chen",
+        extensions: {
+          "openclaw/texting_persona": {
+            enabled: true,
+            timezone: "UTC",
+            default_state: {
+              current_location: "apartment",
+              current_activity: "texting",
+              attention_level: "casually_available",
+              emotional_state: "normal",
+            },
+            schedule: {
+              weekly_schedule: {
+                monday: [
+                  {
+                    time: "10:00-11:00",
+                    event: "focused work",
+                    state: {
+                      current_location: "office",
+                      current_activity: "working",
+                      attention_level: "distracted",
+                      emotional_state: "focused",
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+    }),
+    extraJson: "{}",
+  });
+  store.saveCardDetail(card.id, { name: "Maya Chen" });
+  const preset = store.createAsset({
+    userId: "u1",
+    type: "preset",
+    name: "Default",
+    sourceFormat: "test",
+    rawJson: "{}",
+    extraJson: "{}",
+  });
+  store.savePresetDetail(preset.id, {});
+  const session = store.createSession({
+    userId: "u1",
+    channelType: "test",
+    channelSessionKey: "test:elapsed",
+    cardId: card.id,
+    presetId: preset.id,
+  });
+  const bundleCard = store.getSessionAssetBundle(session.id).card;
+
+  ensureTextingPersonaState({
+    store,
+    sessionId: session.id,
+    card: bundleCard,
+    event: { type: "assistant_turn", content: "hey" },
+    now: new Date("2026-06-01T09:00:00.000Z"),
+  });
+  const result = ensureTextingPersonaState({
+    store,
+    sessionId: session.id,
+    card: bundleCard,
+    event: { type: "user_turn", content: "sorry got pulled away" },
+    now: new Date("2026-06-01T10:45:00.000Z"),
+  });
+
+  assert.equal(result.state.elapsed_class, "noticeable_gap");
+  assert.equal(result.state.elapsed_since_last_interaction_minutes, 105);
+  assert.equal(result.state.previous_location, "apartment");
+  assert.equal(result.state.current_location, "office");
+  assert.equal(result.state.schedule_context_changed, true);
+
+  const prompt = buildTextingPersonaPromptBlock({
+    config: result.config,
+    state: result.state,
+    charName: "Maya Chen",
+  });
+  assert.match(prompt, /elapsed_since_last_interaction: 1 hour 45 minutes \(noticeable_gap\)/);
+  assert.match(prompt, /schedule_transition:/);
+  assert.match(prompt, /do not write as if no time passed/i);
+});
+
+test("conversation continuity evaluates due follow-up windows", () => {
+  const continuity = evaluateConversationContinuity({
+    config: {
+      conversation_continuity: {
+        enabled: true,
+        followup_windows: [
+          {
+            after_minutes: 25,
+            before_minutes: 90,
+            when: "conversation_was_active",
+            mode: "light_followup",
+          },
+        ],
+        fallback_messages: {
+          light_followup: ["lol did i lose you"],
+        },
+      },
+    },
+    state: {
+      elapsed_since_last_interaction_minutes: 45,
+      elapsed_class: "noticeable_gap",
+    },
+    turns: [
+      { role: "user", content: "tell me later", created_at: "2026-06-01T10:00:00.000Z" },
+      { role: "assistant", content: "okay lol", created_at: "2026-06-01T10:01:00.000Z" },
+    ],
+    now: new Date("2026-06-01T10:46:00.000Z"),
+  });
+
+  assert.equal(continuity.due, true);
+  assert.equal(continuity.mode, "light_followup");
+  assert.equal(continuity.elapsedMinutes, 45);
+  assert.equal(continuity.fallbackMessage, "lol did i lose you");
 });
 
 test("availability decision delays replies while asleep", () => {

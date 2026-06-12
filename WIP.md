@@ -49,7 +49,10 @@ Current state to resume from:
 - Recommended harness config for flexible model iteration: keep `agentHarness.runAttemptProvider` set, omit `agentHarness.runAttemptModel` unless a narrower claim filter is needed, and change the generation model with `/rp model -model <id>`.
 - `/rp start -preset <name>` now supports card-authored texting state presets from `data.extensions["openclaw/texting_persona"].state_presets` when no imported generation preset matches that name. These presets are session-start overlays for testing alternate default states; they do not mutate the card or existing sessions. Sarah's local draft card has `normal`, `busy_library`, `late_night_playful`, and `guarded_reset` test presets.
 - State presets now support `schedule_mode`. `merge` is the default and allows schedule to overwrite preset fields. `pin` reapplies the preset's explicit fields after schedule evaluation on each state update, making test presets such as `busy_library` and `late_night_playful` survive the live clock. `suspend` skips schedule application while the preset metadata remains active.
-- Last verification: `npm test` passed with 138/138 tests after adding state preset `schedule_mode` pinning and documentation.
+- Tool ownership investigation: plugin-owned harness generation already suppresses base OpenClaw tools by returning a final no-tool attempt. The observed media-inspection leak happened on the prompt-injection fallback path, where OpenClaw still owns the agent/tool loop. Mitigation added: `before_tool_call` blocks base tool execution during active RP sessions so fallback turns cannot call image/media tools unless a future plugin-owned media path explicitly permits them.
+- Clock/continuity plan: every texting-persona evaluation should compute elapsed time since the last interaction, compare the previous state to the current schedule-derived state, and inject that into the prompt so characters do not assume no time passed between texts.
+- Companion-auto plan: add a card-authored `conversation_continuity` extension so companion nudges can treat a 30+ minute break in an active exchange as a plausible low-pressure follow-up, separate from generic proactive texting.
+- Last verification: `npm test` passed with 141/141 tests after adding clock continuity state and card-authored conversation continuity.
 
 Next live checks:
 
@@ -352,6 +355,25 @@ Follow-up:
 - Add queue inspection/debug commands.
 - Add native OpenClaw delivery support if the runtime exposes a reliable send API.
 
+### 8a. Clock And Conversation Continuity
+
+Status: in progress.
+
+Goal: make real elapsed time fundamental to texting-persona turns and companion-auto.
+
+Implemented / in progress:
+
+- Runtime state now records elapsed time, elapsed class, previous interaction timestamp, previous location/activity/attention/mood, and schedule transitions.
+- Prompt injection includes elapsed-time context and a continuity guard so the character should not write as if no time passed after noticeable gaps.
+- Card extension contract now includes `conversation_continuity` with follow-up windows, modes, rules, and fallback messages.
+- Companion-auto can use `conversation_continuity` to send a follow-up when a conversation was left hanging, even if the generic idle threshold is otherwise too blunt.
+
+Needed:
+
+- Live-test companion-auto with realistic scheduler intervals and confirm it does not spam.
+- Add deterministic fake-time tests around schedule transitions, half-hour abandoned conversation follow-ups, and next-day context reset.
+- Consider a future event classifier for unresolved, sexual, vulnerable, boundary, and pressure states. Keep it lightweight and card-driven.
+
 ### 9. Debug Commands
 
 Status: implemented as MVP.
@@ -470,6 +492,7 @@ Needed sections:
 - Complete `/rp` command reference.
 - Card import/update workflow, PNG JSON embedding, and `/rp update-card [name_or_id]`.
 - Texting persona extension overview with `default_state`, `state_presets`, `schedule_mode`, schedule, availability, proactive texting, and state ranges such as `trust_in_user` / `flirt_comfort`.
+- Tool ownership section: owned-generation no-tool behavior, fallback `before_tool_call` suppression, and future plugin-owned media-understanding path.
 - Debugging guide: `/rp state`, `/rp debug`, `/rp hooks-status`, logs, and common failures.
 - Testing/development guide: `npm test`, card update scripts, Docker smoke checks.
 

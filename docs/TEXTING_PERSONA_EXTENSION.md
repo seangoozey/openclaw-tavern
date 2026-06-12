@@ -53,6 +53,7 @@ type TextingPersonaExtension = {
   schedule?: TextingSchedule;
   availability?: AvailabilityPolicy;
   proactive_texting?: ProactiveTextingConfig;
+  conversation_continuity?: ConversationContinuityConfig;
   message_style?: MessageStyleConfig;
   privacy_model?: PrivacyModel;
   behavior_rules?: BehaviorRules;
@@ -298,6 +299,71 @@ The runtime should choose a plausible trigger before generating proactive text. 
 
 `fallback_messages` provides card-authored guidance for non-model fallback output. Keys may reference `attention_level`, `emotional_state`, `relationship_temperature`, `current_schedule_window`, or broad categories such as `default`, `busy`, `distracted`, `unavailable`, `asleep`, and `repair_attempt`.
 
+## Conversation Continuity
+
+Conversation continuity controls whether companion-auto should treat a break in an active exchange as a reason to follow up. This is separate from generic proactive texting. It is for cases where the user and character were actively texting, then time passed.
+
+```ts
+type ConversationContinuityConfig = {
+  enabled?: boolean;
+  followup_windows?: ContinuityWindow[];
+  rules?: string[];
+  fallback_messages?: Record<string, string | string[]>;
+};
+
+type ContinuityWindow = {
+  after_minutes: number;
+  before_minutes?: number;
+  when?: "conversation_was_active" | "emotionally_open_or_unresolved" | "new_day_or_schedule_changed" | "schedule_changed" | string;
+  mode?: "light_followup" | "callback_or_repair" | "new_context_ping" | string;
+  probability?: number;
+};
+```
+
+The runtime computes elapsed time from plugin state and turn timestamps, not from the model. If a continuity window is due, companion-auto may send a card-authored follow-up even when the generic idle threshold would otherwise block the nudge.
+
+Recommended modes:
+
+- `light_followup`: a low-pressure ping after a short abandoned exchange.
+- `callback_or_repair`: a softer callback after an emotionally open, awkward, sexual, or unresolved exchange.
+- `new_context_ping`: a later message when a new schedule context or daypart makes a fresh text plausible.
+
+`rules` should describe how the character handles silence. They should not force the character to chase every missed reply.
+
+Example:
+
+```json
+{
+  "conversation_continuity": {
+    "enabled": true,
+    "followup_windows": [
+      {
+        "after_minutes": 30,
+        "before_minutes": 90,
+        "when": "conversation_was_active",
+        "mode": "light_followup",
+        "probability": 0.45
+      },
+      {
+        "after_minutes": 90,
+        "before_minutes": 360,
+        "when": "emotionally_open_or_unresolved",
+        "mode": "callback_or_repair",
+        "probability": 0.5
+      }
+    ],
+    "rules": [
+      "Do not always chase silence.",
+      "If the character is busy, follow up only like they found a quick break."
+    ],
+    "fallback_messages": {
+      "light_followup": ["lol did i lose you"],
+      "callback_or_repair": ["okay i am choosing to believe that silence was not judgment"]
+    }
+  }
+}
+```
+
 ## Message Style
 
 ```ts
@@ -423,6 +489,17 @@ These are durable behavior rules specific to the texting simulator. They should 
       "Do not always begin with flirtation.",
       "Daytime texts are usually mundane."
     ]
+  },
+  "conversation_continuity": {
+    "enabled": true,
+    "followup_windows": [
+      {
+        "after_minutes": 30,
+        "before_minutes": 90,
+        "when": "conversation_was_active",
+        "mode": "light_followup"
+      }
+    ]
   }
 }
 ```
@@ -435,11 +512,13 @@ The OpenClaw plugin should:
 - Initialize persistent session state from `default_state`.
 - Compute an authoritative runtime clock in plugin code and inject concrete local time/date values into prompts.
 - Re-evaluate state from schedule and real time.
+- Compute elapsed time between turns and inject continuity context into prompts.
 - Update state after user and assistant turns.
 - Inject live state into prompts.
 - Enforce output brevity where the plugin controls the outgoing text.
 - Use OpenClaw delivery-stage hooks such as `message_sending` and `reply_payload_sending` to normalize native agent replies before channel delivery when those hooks expose outbound text.
 - Use proactive rules when generating scheduled outreach.
+- Use `conversation_continuity` when companion-auto evaluates whether silence after an active exchange deserves a follow-up.
 - Store live state in plugin storage, not in the card.
 
 Future runtime work should add:

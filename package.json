@@ -1,6 +1,6 @@
 {
   "name": "texting-sim",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Persistent character texting simulator for OpenClaw with card import, owned generation, memory, schedule-aware state, proactive outreach, and multimodal tools.",
   "author": "seangoozey",
   "license": "MIT",

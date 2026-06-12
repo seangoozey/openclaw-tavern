@@ -2984,6 +2984,10 @@ export default {
           configured: true,
           registered: registeredNativeHooks.has("before_message_write"),
         },
+        before_tool_call: {
+          configured: true,
+          registered: registeredNativeHooks.has("before_tool_call"),
+        },
         message_sending: {
           configured: true,
           registered: registeredNativeHooks.has("message_sending"),
@@ -3480,6 +3484,56 @@ export default {
       };
     }
 
+    function resolveActiveToolRpSession(event = {}, ctx = {}) {
+      if (!store) {
+        return null;
+      }
+      const existing = findRpContext(activeRpContextByAgentSessionKey, activeRpContextByChannel, ctx);
+      if (existing?.session?.id) {
+        const session = store.getSessionById(existing.session.id);
+        if (session && asString(session.status).toLowerCase() === "active") {
+          return {
+            session,
+            routerCtx: existing.routerCtx,
+            channelSessionKey: session.channel_session_key || existing.channelKey || "",
+          };
+        }
+      }
+
+      const routerCtx = buildHarnessRouterContext({
+        ...(ctx || {}),
+        ...(event || {}),
+        provider: ctx?.provider || event?.provider,
+        modelId: ctx?.modelId || event?.modelId,
+        messageProvider: ctx?.messageProvider || ctx?.channel || ctx?.channelId,
+        messageTo: ctx?.messageTo || ctx?.conversationId || ctx?.channelId,
+        currentChannelId: ctx?.currentChannelId || ctx?.channelId,
+        senderId: ctx?.senderId || event?.senderId || event?.metadata?.senderId,
+        sessionKey: ctx?.sessionKey || event?.sessionKey,
+        sandboxSessionKey: ctx?.sandboxSessionKey || event?.sandboxSessionKey,
+      });
+      const channelSessionKey = buildChannelSessionKey(routerCtx);
+      let session = store.getSessionByChannelKey(channelSessionKey);
+      if (!session) {
+        const peers = [
+          routerCtx.platformContextId,
+          routerCtx.channelId,
+          routerCtx.userId,
+          ctx?.conversationId,
+          ctx?.channelId,
+          ctx?.currentChannelId,
+          ctx?.messageTo,
+        ].filter(Boolean);
+        session = resolveActiveSessionForPending(store, db, {
+          routerCtx,
+          peers,
+        });
+      }
+      return session && asString(session.status).toLowerCase() === "active"
+        ? { session, routerCtx, channelSessionKey: session.channel_session_key || channelSessionKey }
+        : null;
+    }
+
     async function runOwnedHarnessRpGeneration(params = {}) {
       await ensureInitialized();
       if (!isRpAgentAllowed(params)) {
@@ -3957,6 +4011,32 @@ export default {
     }
 
     registerDiagnosticAgentHarness();
+
+    registerOptionalNativeHook("before_tool_call", async (event = {}, ctx = {}) => {
+      try {
+        if (!isRpAgentAllowed(event, ctx)) {
+          return undefined;
+        }
+        await ensureInitialized();
+        const resolved = resolveActiveToolRpSession(event, ctx);
+        if (!resolved?.session) {
+          return undefined;
+        }
+        const toolName = asString(event?.toolName || event?.name || ctx?.toolName);
+        const toolKind = asString(event?.toolKind || ctx?.toolKind);
+        api.logger?.info?.(
+          `[openclaw-rp] before_tool_call: blocking tool during active RP session session=${resolved.session.id} tool=${toolName || "(unknown)"} kind=${toolKind || "(unknown)"}`,
+        );
+        return {
+          block: true,
+          blockReason:
+            "Active RP session is owned by the texting simulator. Base OpenClaw tools are disabled for this turn; use plugin-owned RP/media commands instead.",
+        };
+      } catch (err) {
+        api.logger?.warn?.(`[openclaw-rp] before_tool_call hook failed: ${String(err?.message || err)}`);
+        return undefined;
+      }
+    });
 
     api.registerCommand({
       name: "rp",

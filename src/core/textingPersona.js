@@ -46,6 +46,38 @@ function compact(value, maxLen = 240) {
   return `${text.slice(0, Math.max(20, maxLen - 1))}...`;
 }
 
+function formatElapsedMinutes(minutes) {
+  const n = Math.max(0, Number(minutes) || 0);
+  if (n < 1) {
+    return "less than a minute";
+  }
+  if (n < 60) {
+    return `${Math.round(n)} minute${Math.round(n) === 1 ? "" : "s"}`;
+  }
+  const hours = Math.floor(n / 60);
+  const mins = Math.round(n % 60);
+  if (hours < 24) {
+    return mins > 0
+      ? `${hours} hour${hours === 1 ? "" : "s"} ${mins} minute${mins === 1 ? "" : "s"}`
+      : `${hours} hour${hours === 1 ? "" : "s"}`;
+  }
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return remHours > 0
+    ? `${days} day${days === 1 ? "" : "s"} ${remHours} hour${remHours === 1 ? "" : "s"}`
+    : `${days} day${days === 1 ? "" : "s"}`;
+}
+
+export function classifyElapsedMinutes(minutes) {
+  const n = Math.max(0, Number(minutes) || 0);
+  if (n < 5) return "continuous";
+  if (n < 30) return "small_pause";
+  if (n < 120) return "noticeable_gap";
+  if (n < 480) return "major_gap";
+  if (n < 1080) return "daypart_changed";
+  return "new_day_or_long_gap";
+}
+
 function toPositiveInt(value, fallback) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) {
@@ -617,6 +649,77 @@ function applyTimeState(state, config, now) {
   return next;
 }
 
+function latestTimestamp(...values) {
+  let latest = null;
+  for (const value of values) {
+    if (!value) continue;
+    const ms = new Date(value).getTime();
+    if (!Number.isFinite(ms)) continue;
+    if (!latest || ms > latest.ms) {
+      latest = { value, ms };
+    }
+  }
+  return latest;
+}
+
+function applyElapsedTimeContext(state, existingRow, now, event) {
+  if (!["user_turn", "companion_check", "proactive_check"].includes(String(event?.type || ""))) {
+    return state;
+  }
+  const previous = latestTimestamp(
+    state.last_interaction_at,
+    existingRow?.last_assistant_message_at,
+    existingRow?.last_user_message_at,
+    existingRow?.last_evaluated_at,
+  );
+  if (!previous) {
+    return state;
+  }
+
+  const elapsedMinutes = Math.max(0, (now.getTime() - previous.ms) / 60000);
+  const elapsedClass = classifyElapsedMinutes(elapsedMinutes);
+  return {
+    ...state,
+    previous_interaction_at: previous.value,
+    elapsed_since_last_interaction_minutes: Math.round(elapsedMinutes * 10) / 10,
+    elapsed_since_last_interaction_label: formatElapsedMinutes(elapsedMinutes),
+    elapsed_class: elapsedClass,
+    previous_location: state.current_location,
+    previous_activity: state.current_activity,
+    previous_attention_level: state.attention_level,
+    previous_emotional_state: state.emotional_state,
+    time_gap_summary:
+      elapsedClass === "continuous"
+        ? "The last exchange was recent; this can read as a continuous conversation."
+        : `About ${formatElapsedMinutes(elapsedMinutes)} passed since the last interaction. Do not assume the character is still in the exact same moment unless schedule/state says so.`,
+  };
+}
+
+function applyScheduleChangeContext(state, beforeSchedule) {
+  const changed = [
+    "current_location",
+    "current_activity",
+    "attention_level",
+    "emotional_state",
+    "current_schedule_window",
+    "current_schedule_event",
+  ].some((key) => state[key] !== beforeSchedule[key]);
+  if (!changed) {
+    return {
+      ...state,
+      schedule_context_changed: false,
+    };
+  }
+  return {
+    ...state,
+    schedule_context_changed: true,
+    schedule_transition_summary: [
+      `Previous: ${beforeSchedule.current_location || "unknown"} / ${beforeSchedule.current_activity || "unknown"} / ${beforeSchedule.attention_level || "unknown"} / ${beforeSchedule.emotional_state || "unknown"}`,
+      `Current: ${state.current_location || "unknown"} / ${state.current_activity || "unknown"} / ${state.attention_level || "unknown"} / ${state.emotional_state || "unknown"}`,
+    ].join(" | "),
+  };
+}
+
 function classifyUserText(text) {
   const lower = String(text || "").toLowerCase();
   return {
@@ -702,6 +805,8 @@ export function ensureTextingPersonaState({ store, sessionId, card, event, now =
     now,
     timeZone: config?.timezone || config?.schedule?.timezone,
   });
+  state = applyElapsedTimeContext(state, existing, now, event);
+  const beforeSchedule = { ...state };
   if (state.state_preset_schedule_mode !== "suspend") {
     state = applyTimeState(state, config, now);
   }
@@ -720,6 +825,7 @@ export function ensureTextingPersonaState({ store, sessionId, card, event, now =
       }
     }
   }
+  state = applyScheduleChangeContext(state, beforeSchedule);
   state = applyTurnEvent(state, event, now);
   state.last_evaluated_at = now.toISOString();
   state.runtime_clock = runtimeClock;
@@ -779,9 +885,13 @@ export function buildTextingPersonaPromptBlock({ config, state, now = new Date()
     state.last_assistant_message_preview
       ? `- last_assistant_message_preview: ${state.last_assistant_message_preview}`
       : "",
+    state.elapsed_class ? `- elapsed_since_last_interaction: ${state.elapsed_since_last_interaction_label} (${state.elapsed_class})` : "",
+    state.time_gap_summary ? `- time_gap_summary: ${state.time_gap_summary}` : "",
+    state.schedule_context_changed ? `- schedule_transition: ${state.schedule_transition_summary}` : "",
     `- evaluated_at: ${now.toISOString()}`,
     "",
     `Use this state as live simulation context. If attention_level is asleep or unavailable, reply briefly, belatedly, or not with full emotional availability. If ${charName || "the character"} is in class or distracted, keep messages short. Let ordinary life, schedule, privacy, and uneven mood affect the response.`,
+    "Real-time continuity guard: if elapsed_since_last_interaction is noticeable_gap, major_gap, daypart_changed, or new_day_or_long_gap, do not write as if no time passed. Let the gap affect availability, tone, and whether a brief callback or context reset is natural.",
     `Identity guard: write only as ${charName || "the character"} inside the card premise. Never identify as an AI, assistant, chatbot, language model, or system. Do not answer with base-assistant disclaimers about not having an age, body, feelings, memories, or a real life.`,
   ].filter(Boolean);
 
@@ -879,6 +989,107 @@ export function buildTextingPersonaFallbackMessage({ config, state }) {
     return pickFirstFallback(fallback[mood], fallback.default);
   }
   return pickFirstFallback(fallback.default);
+}
+
+function normalizeContinuityWindows(config) {
+  const raw = config?.conversation_continuity?.followup_windows;
+  return Array.isArray(raw) ? raw.filter((item) => item && typeof item === "object") : [];
+}
+
+function continuityConditionMatches(condition, state, turns) {
+  const when = String(condition || "conversation_was_active").trim().toLowerCase();
+  const safeTurns = Array.isArray(turns) ? turns.filter(Boolean) : [];
+  const lastTurn = safeTurns.at(-1);
+  const recentText = safeTurns
+    .slice(-4)
+    .map((turn) => String(turn?.content || "").toLowerCase())
+    .join("\n");
+
+  if (when === "conversation_was_active") {
+    return lastTurn?.role === "assistant" || safeTurns.slice(-4).some((turn) => turn?.role === "assistant");
+  }
+
+  if (when === "emotionally_open_or_unresolved") {
+    const temperature = String(state?.relationship_temperature || "").toLowerCase();
+    const mood = String(state?.emotional_state || "").toLowerCase();
+    return (
+      /warm|charged|intimate|weird|overheated/.test(temperature) ||
+      /vulnerable|lonely|self_reflective|flustered|sad|careful|horny|wired/.test(mood) ||
+      /\b(sorry|miss|still|wait|feel|feelings|okay|mad|weird|later|\?)\b/.test(recentText)
+    );
+  }
+
+  if (when === "new_day_or_schedule_changed") {
+    return Boolean(state?.schedule_context_changed) || Number(state?.elapsed_since_last_interaction_minutes || 0) >= 360;
+  }
+
+  if (when === "schedule_changed") {
+    return Boolean(state?.schedule_context_changed);
+  }
+
+  return true;
+}
+
+function continuityFallbackMessages(config, mode) {
+  const fallback = config?.conversation_continuity?.fallback_messages || {};
+  return pickFirstFallback(fallback[mode], fallback.default, config?.proactive_texting?.fallback_messages?.default);
+}
+
+export function evaluateConversationContinuity({ config, state, turns = [], now = new Date(), random = Math.random } = {}) {
+  const policy = config?.conversation_continuity;
+  if (!policy || policy.enabled === false) {
+    return { due: false, reason: "continuity_disabled" };
+  }
+
+  const safeTurns = Array.isArray(turns) ? turns.filter(Boolean) : [];
+  const lastTurn = safeTurns.at(-1);
+  const lastTurnMs = lastTurn?.created_at ? new Date(lastTurn.created_at).getTime() : NaN;
+  const elapsedMinutes = Number.isFinite(Number(state?.elapsed_since_last_interaction_minutes))
+    ? Number(state.elapsed_since_last_interaction_minutes)
+    : Number.isFinite(lastTurnMs)
+      ? Math.max(0, (now.getTime() - lastTurnMs) / 60000)
+      : 0;
+  const elapsedClass = state?.elapsed_class || classifyElapsedMinutes(elapsedMinutes);
+
+  for (const window of normalizeContinuityWindows(config)) {
+    const after = Math.max(0, Number(window.after_minutes ?? window.afterMinutes ?? 0) || 0);
+    const beforeRaw = window.before_minutes ?? window.beforeMinutes;
+    const before = beforeRaw === undefined || beforeRaw === null ? Infinity : Math.max(after, Number(beforeRaw) || after);
+    if (elapsedMinutes < after || elapsedMinutes > before) {
+      continue;
+    }
+    if (!continuityConditionMatches(window.when, state, safeTurns)) {
+      continue;
+    }
+    const probability = Number(window.probability ?? 1);
+    if (Number.isFinite(probability) && probability <= 0) {
+      continue;
+    }
+    if (Number.isFinite(probability) && probability < 1 && typeof random === "function" && random() >= probability) {
+      continue;
+    }
+    const mode = String(window.mode || "light_followup").trim() || "light_followup";
+    return {
+      due: true,
+      mode,
+      reason: `conversation_continuity:${mode}`,
+      elapsedMinutes: Math.round(elapsedMinutes * 10) / 10,
+      elapsedLabel: formatElapsedMinutes(elapsedMinutes),
+      elapsedClass,
+      condition: String(window.when || "conversation_was_active"),
+      rules: Array.isArray(policy.rules) ? policy.rules : [],
+      fallbackMessage: continuityFallbackMessages(config, mode),
+      window,
+    };
+  }
+
+  return {
+    due: false,
+    reason: "no_continuity_window_due",
+    elapsedMinutes: Math.round(elapsedMinutes * 10) / 10,
+    elapsedLabel: formatElapsedMinutes(elapsedMinutes),
+    elapsedClass,
+  };
 }
 
 export function decideTextingPersonaAvailability({ config, state, now = new Date(), force = false } = {}) {

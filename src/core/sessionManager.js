@@ -16,6 +16,7 @@ import {
   buildTextingPersonaProactivePrompt,
   buildTextingPersonaFallbackMessage,
   decideTextingPersonaAvailability,
+  evaluateConversationContinuity,
   addMinutesIso,
   ensureTextingPersonaState,
   hasTextingPersona,
@@ -426,6 +427,18 @@ export class SessionManager {
       const lastTurn = turns.length > 0 ? turns[turns.length - 1] : null;
       const lastTs = toIsoTimeValue(lastTurn?.created_at) ?? toIsoTimeValue(current.updated_at) ?? Date.now();
       const idleMinutes = Math.max(0, (Date.now() - lastTs) / 60000);
+      const continuityState = hasTextingPersona(this.store.getSessionAssetBundle(current.id).card)
+        ? this.updateTextingPersonaState(current.id, {
+            type: "companion_check",
+          })
+        : null;
+      const continuity = continuityState
+        ? evaluateConversationContinuity({
+            config: continuityState.config,
+            state: continuityState.state,
+            turns,
+          })
+        : null;
       const requiredIdle = Math.max(
         0,
         Number(
@@ -435,7 +448,7 @@ export class SessionManager {
             0,
         ) || 0,
       );
-      if (!force && requiredIdle > 0 && idleMinutes < requiredIdle) {
+      if (!force && !continuity?.due && requiredIdle > 0 && idleMinutes < requiredIdle) {
         return {
           ignored: true,
           reason: "idle_not_reached",
@@ -446,7 +459,10 @@ export class SessionManager {
       }
 
       const triggerReason = cleanSnippet(
-        reason || "Scheduled companion check-in based on long-term memory",
+        reason ||
+          (continuity?.due
+            ? `Conversation continuity follow-up after ${continuity.elapsedLabel || "a break"} (${continuity.mode})`
+            : "Scheduled companion check-in based on long-term memory"),
         240,
       );
       const prepared = await this.preparePromptForSession(current.id, {
@@ -459,6 +475,7 @@ export class SessionManager {
             prepared,
             userName: current.user_id,
             triggerReason,
+            continuity,
           })
         : await this.composeCompanionMessage({
             prepared,
@@ -492,6 +509,7 @@ export class SessionManager {
         followupText: prepared.textingPersona ? "" : companion.proactiveQuestion || "",
         companion,
         triggerReason,
+        continuity: continuity?.due ? continuity : null,
         idleMinutes,
         status: current.status,
         memoryRecallCount: Number(prepared.retrievedMemories?.length || 0),
@@ -722,15 +740,18 @@ export class SessionManager {
     return fallback;
   }
 
-  async composeTextingPersonaMessage({ prepared, userName, triggerReason }) {
+  async composeTextingPersonaMessage({ prepared, userName, triggerReason, continuity }) {
     const charName = prepared?.bundle?.card?.detail?.name || prepared?.bundle?.card?.name || "Character";
     const fallback = {
-      proactiveMessage: buildTextingPersonaFallbackMessage({
-        config: prepared?.textingPersona?.config,
-        state: prepared?.textingPersona?.state,
-      }),
+      proactiveMessage:
+        continuity?.fallbackMessage ||
+        buildTextingPersonaFallbackMessage({
+          config: prepared?.textingPersona?.config,
+          state: prepared?.textingPersona?.state,
+        }),
       source: "fallback",
       textingPersona: true,
+      continuity: continuity?.due ? continuity : null,
     };
 
     if (!this.modelProvider?.generate) {
@@ -745,7 +766,14 @@ export class SessionManager {
     const prompt = buildTextingPersonaProactivePrompt({
       charName,
       userName,
-      triggerReason,
+      triggerReason: continuity?.due
+        ? [
+            `${triggerReason}. Continuity mode: ${continuity.mode}. Elapsed: ${continuity.elapsedLabel}. Condition: ${continuity.condition}.`,
+            continuity.rules?.length ? `Continuity rules: ${continuity.rules.slice(0, 4).join(" ")}` : "",
+          ]
+            .filter(Boolean)
+            .join(" ")
+        : triggerReason,
       config: prepared?.textingPersona?.config,
       state: prepared?.textingPersona?.state,
       recentText,
@@ -788,6 +816,7 @@ export class SessionManager {
           proactiveMessage,
           source: "model",
           textingPersona: true,
+          continuity: continuity?.due ? continuity : null,
         };
       }
     } catch (err) {
