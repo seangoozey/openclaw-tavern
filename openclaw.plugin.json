@@ -45,7 +45,8 @@
             "enum": [
               "inherit",
               "openai",
-              "gemini"
+              "gemini",
+              "ollama"
             ],
             "default": "inherit"
           },
@@ -83,7 +84,8 @@
         "enum": [
           "inherit",
           "openai",
-          "gemini"
+          "gemini",
+          "ollama"
         ],
         "default": "inherit"
       },
@@ -92,6 +94,10 @@
         "additionalProperties": true
       },
       "gemini": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "ollama": {
         "type": "object",
         "additionalProperties": true
       },

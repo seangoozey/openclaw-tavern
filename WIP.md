@@ -53,7 +53,8 @@ Current state to resume from:
 - Clock/continuity plan: every texting-persona evaluation should compute elapsed time since the last interaction, compare the previous state to the current schedule-derived state, and inject that into the prompt so characters do not assume no time passed between texts.
 - Companion-auto plan: add a card-authored `conversation_continuity` extension so companion nudges can treat a 30+ minute break in an active exchange as a plausible low-pressure follow-up, separate from generic proactive texting.
 - Native Ollama provider work: OpenClaw custom providers with `api: "ollama"` should route plugin-owned generation to Ollama's `/api/chat` endpoint, preserving slash-containing model tags such as `realStomp/thebloke-mythomax-l2-kimiko-v2-13b:latest`.
-- Last verification: `npm test` passed with 144/144 tests after adding native Ollama provider support.
+- Ollama separation fix: the OpenClaw agent may need to stay on a tool-capable provider while the plugin-owned RP generator uses Ollama. Support plugin-local `provider: "ollama"` / `ollama` config so `agentHarness.runAttemptProvider` can match the agent provider and plugin generation can still call local Ollama.
+- Last verification: `npm test` passed with 145/145 tests after adding plugin-local Ollama provider support.
 
 Next live checks:
 

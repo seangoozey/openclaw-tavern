@@ -2379,6 +2379,7 @@ function summarizePluginOwnedProviderConfig(apiConfig) {
   const provider = asString(pluginConfig.provider || pluginConfig.llm_provider || "inherit");
   const openaiApiKey = resolveConfigString(pluginConfig.openai?.apiKey || pluginConfig.openai?.api_key, rootConfig);
   const geminiApiKey = resolveConfigString(pluginConfig.gemini?.apiKey || pluginConfig.gemini?.api_key, rootConfig);
+  const ollamaBaseUrl = asString(pluginConfig.ollama?.baseUrl || pluginConfig.ollama?.base_url || pluginConfig.ollama?.url);
   return {
     provider,
     hasOpenaiConfig: isObject(pluginConfig.openai),
@@ -2389,6 +2390,9 @@ function summarizePluginOwnedProviderConfig(apiConfig) {
     hasGeminiConfig: isObject(pluginConfig.gemini),
     geminiApiKeyConfigured: Boolean(pluginConfig.gemini?.apiKey || pluginConfig.gemini?.api_key),
     geminiApiKeyResolved: Boolean(geminiApiKey),
+    hasOllamaConfig: isObject(pluginConfig.ollama),
+    ollamaBaseUrlConfigured: Boolean(ollamaBaseUrl),
+    ollamaModelConfigured: Boolean(asString(pluginConfig.ollama?.model || pluginConfig.ollama?.model_id)),
   };
 }
 
@@ -2404,6 +2408,7 @@ function normalizeProviderHint(value) {
   const raw = String(value || "").toLowerCase();
   if (!raw) return "";
   if (raw.includes("gemini") || raw.includes("google")) return "gemini";
+  if (raw.includes("ollama")) return "ollama";
   if (raw.includes("openai")) return "openai";
   if (raw.includes("anthropic") || raw.includes("claude")) return "openai";
   if (raw.includes("compatible")) return "openai";
@@ -2678,6 +2683,59 @@ function resolveProviderConfig(apiConfig, overrides = {}) {
   const preferGemini =
     selectedProvider === "gemini" ||
     (!selectedProvider && geminiApiKey && !openaiApiKey);
+
+  if (selectedProvider === "ollama") {
+    const ollamaConfig = isObject(pluginConfig.ollama) ? pluginConfig.ollama : {};
+    const firstModel = Array.isArray(ollamaConfig.models)
+      ? ollamaConfig.models.find((item) => asString(item?.id))
+      : null;
+    const baseUrl =
+      asString(ollamaConfig.baseUrl) ||
+      asString(ollamaConfig.base_url) ||
+      asString(ollamaConfig.endpoint) ||
+      asString(ollamaConfig.url) ||
+      fileConfig.ollama_base_url ||
+      process.env.OPENCLAW_RP_OLLAMA_BASE_URL ||
+      process.env.OLLAMA_BASE_URL;
+    const model =
+      asString(ollamaConfig.model || ollamaConfig.model_id) ||
+      asString(firstModel?.id) ||
+      fileConfig.ollama_model ||
+      process.env.OPENCLAW_RP_OLLAMA_MODEL ||
+      process.env.OLLAMA_MODEL;
+    if (!baseUrl) {
+      return {};
+    }
+    return createOllamaProviders({
+      baseUrl,
+      model,
+      logger: overrides.logger,
+      embeddingModel:
+        asString(ollamaConfig.embeddingModel || ollamaConfig.embedding_model) ||
+        asString(ollamaConfig.embeddings?.model) ||
+        fileConfig.ollama_embedding_model ||
+        process.env.OPENCLAW_RP_OLLAMA_EMBEDDING_MODEL ||
+        process.env.OLLAMA_EMBEDDING_MODEL,
+      chatTimeoutMs: toPositiveNumber(
+        ollamaConfig.chatTimeoutMs ||
+          ollamaConfig.chat_timeout_ms ||
+          ollamaConfig.timeoutMs ||
+          ollamaConfig.timeout_ms ||
+          fileConfig.ollama_chat_timeout_ms ||
+          process.env.OPENCLAW_RP_OLLAMA_CHAT_TIMEOUT_MS ||
+          process.env.OLLAMA_CHAT_TIMEOUT_MS,
+        60000,
+      ),
+      embeddingTimeoutMs: toPositiveNumber(
+        ollamaConfig.embeddingTimeoutMs ||
+          ollamaConfig.embedding_timeout_ms ||
+          fileConfig.ollama_embedding_timeout_ms ||
+          process.env.OPENCLAW_RP_OLLAMA_EMBEDDING_TIMEOUT_MS ||
+          process.env.OLLAMA_EMBEDDING_TIMEOUT_MS,
+        30000,
+      ),
+    });
+  }
 
   if (selectedProvider === "gemini" && !geminiApiKey) {
     return {};

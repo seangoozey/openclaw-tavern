@@ -319,41 +319,22 @@ For plugin-owned OpenRouter generation, use the OpenAI-compatible provider and a
 
 The plugin resolves `source: "env"` SecretRef-style objects from the container environment. File and exec SecretRef providers are not resolved by this plugin unless OpenClaw exposes a generic plugin secret-resolution API.
 
-For local Ollama, use an OpenClaw custom provider with `api: "ollama"` and keep the plugin provider as `inherit`:
+For local Ollama, the safest setup is to keep the OpenClaw agent on its normal tool-capable model and configure only plugin-owned RP generation to use Ollama:
 
 ```json
 {
-  "agents": {
-    "defaults": {
-      "model": {
-        "primary": "ollama/realStomp/thebloke-mythomax-l2-kimiko-v2-13b:latest"
-      }
-    }
-  },
-  "models": {
-    "providers": {
-      "ollama": {
-        "api": "ollama",
-        "apiKey": "ollama-local",
-        "baseUrl": "http://192.168.1.3:30068",
-        "models": [
-          {
-            "id": "realStomp/thebloke-mythomax-l2-kimiko-v2-13b:latest",
-            "name": "realStomp/thebloke-mythomax-l2-kimiko-v2-13b:latest",
-            "contextWindow": 4096
-          }
-        ]
-      }
-    }
-  },
   "plugins": {
     "entries": {
       "texting-sim": {
         "config": {
-          "provider": "inherit",
+          "provider": "ollama",
+          "ollama": {
+            "baseUrl": "http://192.168.1.3:30068",
+            "model": "realStomp/thebloke-mythomax-l2-kimiko-v2-13b:latest"
+          },
           "agentHarness": {
             "ownedGeneration": true,
-            "runAttemptProvider": "ollama"
+            "runAttemptProvider": "openrouter"
           }
         }
       }
@@ -361,6 +342,8 @@ For local Ollama, use an OpenClaw custom provider with `api: "ollama"` and keep 
   }
 }
 ```
+
+In this mode, `agentHarness.runAttemptProvider` should match the provider used by the OpenClaw agent so the harness can claim that agent's turn, while `config.provider: "ollama"` controls which provider the plugin uses to generate the RP reply. If the agent itself is configured with provider `ollama`, set `runAttemptProvider` to `ollama` instead.
 
 Smoke-test Ollama from inside the OpenClaw container before testing `/rp`:
 
