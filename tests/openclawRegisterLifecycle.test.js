@@ -699,8 +699,8 @@ test("agent harness owned generation is quiet in supports when diagnostics are d
       modelId: "z-ai/glm-4.7-flash",
       requestedRuntime: "auto",
     });
-    assert.equal(supported.supported, false);
-    assert.equal(supported.reason, "no_active_rp_session");
+    assert.equal(supported.supported, true);
+    assert.equal(supported.reason, "owned_generation_deferred_safety");
     assert.equal(infoLogs.some((item) => item.includes("agent_harness.supports")), false);
     assert.equal(warnLogs.some((item) => item.includes("agent_harness.supports")), false);
   } finally {
@@ -764,8 +764,8 @@ test("agent harness owned generation respects allowedAgents before claiming", as
         modelId: "z-ai/glm-4.7-flash",
       }),
       {
-        supported: false,
-        reason: "agent_not_allowed",
+        supported: true,
+        reason: "owned_generation_deferred_safety",
       },
     );
 
@@ -1320,6 +1320,10 @@ test("agent harness owned generation can use plugin-local Ollama while agent pro
     };
     let result = await rp.handler({ ...baseCtx, commandBody: `/rp import-card --file "${cardPath}"` });
     assert.equal(result.isError, undefined);
+    result = await rp.handler({ ...baseCtx, commandBody: "/rp model" });
+    assert.equal(result.isError, undefined);
+    assert.match(result.text, /provider: ollama/);
+    assert.match(result.text, /realStomp\/thebloke-mythomax-l2-kimiko-v2-13b:latest/);
     result = await rp.handler({ ...baseCtx, commandBody: "/rp start --card Nina" });
     assert.equal(result.isError, undefined);
 

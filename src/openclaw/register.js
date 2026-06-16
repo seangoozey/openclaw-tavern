@@ -3111,6 +3111,8 @@ export default {
       const provider = asString(pluginConfig.provider) || "openai";
       const configuredModel =
         asString(pluginConfig.openai?.model || pluginConfig.openai?.model_id) ||
+        asString(pluginConfig.ollama?.model || pluginConfig.ollama?.model_id) ||
+        asString(pluginConfig.gemini?.model || pluginConfig.gemini?.model_id) ||
         asString(pluginConfig.agentHarness?.runAttemptModel);
       return {
         provider,
@@ -3847,7 +3849,13 @@ export default {
         supports(ctx = {}) {
           const match = agentHarnessRunAttemptMatches(ctx);
           const agentAllowed = isRpAgentAllowed(ctx);
-          const activeRpSession = ownedGeneration ? resolveActiveHarnessRpSession(ctx).session : null;
+          const agentCandidates = [...collectAgentIdCandidates(ctx)];
+          const deferOwnedSafetyToRunAttempt =
+            ownedGeneration && match.matches && agentCandidates.length === 0;
+          const activeRpSession =
+            ownedGeneration && !deferOwnedSafetyToRunAttempt
+              ? resolveActiveHarnessRpSession(ctx).session
+              : null;
           if (supportsDiagnostics) {
             const summary = summarizeAgentHarnessValue(ctx);
             api.logger?.info?.(`[openclaw-rp] agent_harness.supports diagnostic ${JSON.stringify(summary)}`);
@@ -3855,17 +3863,24 @@ export default {
           if (
             (runAttemptDiagnostics || ownedGeneration) &&
             match.matches &&
-            agentAllowed &&
-            (!ownedGeneration || activeRpSession)
+            (agentAllowed || deferOwnedSafetyToRunAttempt) &&
+            (!ownedGeneration || activeRpSession || deferOwnedSafetyToRunAttempt)
           ) {
             if (supportsDiagnostics || runAttemptDiagnostics) {
               api.logger?.warn?.(
-                `[openclaw-rp] agent_harness.supports ${runAttemptDiagnostics ? "runAttempt diagnostic" : "owned generation"} claiming ${JSON.stringify(match)}`,
+                `[openclaw-rp] agent_harness.supports ${runAttemptDiagnostics ? "runAttempt diagnostic" : "owned generation"} claiming ${JSON.stringify({
+                  ...match,
+                  deferredSafety: deferOwnedSafetyToRunAttempt,
+                })}`,
               );
             }
             return {
               supported: true,
-              reason: runAttemptDiagnostics ? match.reason : "owned_generation",
+              reason: runAttemptDiagnostics
+                ? match.reason
+                : deferOwnedSafetyToRunAttempt
+                  ? "owned_generation_deferred_safety"
+                  : "owned_generation",
             };
           }
           if (supportsDiagnostics && (runAttemptDiagnostics || ownedGeneration)) {
@@ -3873,8 +3888,9 @@ export default {
               `[openclaw-rp] agent_harness.supports ${runAttemptDiagnostics ? "runAttempt diagnostic" : "owned generation"} skipped ${JSON.stringify({
                 ...match,
                 agentAllowed,
-                agentCandidates: [...collectAgentIdCandidates(ctx)],
+                agentCandidates,
                 activeRpSession: Boolean(activeRpSession),
+                deferredSafety: deferOwnedSafetyToRunAttempt,
               })}`,
             );
           }
