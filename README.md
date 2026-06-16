@@ -319,6 +319,60 @@ For plugin-owned OpenRouter generation, use the OpenAI-compatible provider and a
 
 The plugin resolves `source: "env"` SecretRef-style objects from the container environment. File and exec SecretRef providers are not resolved by this plugin unless OpenClaw exposes a generic plugin secret-resolution API.
 
+For local Ollama, use an OpenClaw custom provider with `api: "ollama"` and keep the plugin provider as `inherit`:
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "ollama/realStomp/thebloke-mythomax-l2-kimiko-v2-13b:latest"
+      }
+    }
+  },
+  "models": {
+    "providers": {
+      "ollama": {
+        "api": "ollama",
+        "apiKey": "ollama-local",
+        "baseUrl": "http://192.168.1.3:30068",
+        "models": [
+          {
+            "id": "realStomp/thebloke-mythomax-l2-kimiko-v2-13b:latest",
+            "name": "realStomp/thebloke-mythomax-l2-kimiko-v2-13b:latest",
+            "contextWindow": 4096
+          }
+        ]
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "texting-sim": {
+        "config": {
+          "provider": "inherit",
+          "agentHarness": {
+            "ownedGeneration": true,
+            "runAttemptProvider": "ollama"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Smoke-test Ollama from inside the OpenClaw container before testing `/rp`:
+
+```bash
+curl http://192.168.1.3:30068/api/tags
+curl http://192.168.1.3:30068/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"realStomp/thebloke-mythomax-l2-kimiko-v2-13b:latest","messages":[{"role":"user","content":"reply with ok"}],"stream":false}'
+```
+
+If `/api/tags` works but `/api/chat` fails, the model id in `agents.defaults.model.primary` does not exactly match an Ollama tag. If the host can reach `/api/tags` but the container cannot, fix Docker networking before debugging the plugin.
+
 In native OpenClaw mode, the plugin-owned chat model can be changed without editing `openclaw.json`:
 
 ```bash

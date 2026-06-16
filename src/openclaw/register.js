@@ -7,6 +7,7 @@ import { asRPError } from "../errors.js";
 import { RP_ERROR_CODES } from "../types.js";
 import { createRPPlugin } from "../plugin.js";
 import { createOpenAICompatibleProviders } from "../providers/openaiCompatible.js";
+import { createOllamaProviders } from "../providers/ollama.js";
 import { createGeminiProviders } from "../providers/gemini.js";
 import { SqliteStore } from "../store/sqliteStore.js";
 import { NodeSqliteCompat } from "./nodeSqliteCompat.js";
@@ -2568,13 +2569,14 @@ function resolveOpenClawCustomProviderConfig(rootConfig, inherited, overrides = 
     return null;
   }
   const api = asString(provider.api || provider.type || "openai-completions").toLowerCase();
+  const isOllama = api === "ollama" || api === "ollama-chat" || api === "ollama-native";
   const isOpenAiCompatible =
     !api ||
     api === "openai" ||
     api === "openai-completions" ||
     api === "openai-chat-completions" ||
     api === "openai-responses";
-  if (!isOpenAiCompatible) {
+  if (!isOpenAiCompatible && !isOllama) {
     return null;
   }
 
@@ -2592,8 +2594,26 @@ function resolveOpenClawCustomProviderConfig(rootConfig, inherited, overrides = 
   if (!baseUrl && !apiKey) {
     return null;
   }
-  if (baseUrl && !apiKey && !isLocalBaseUrl(baseUrl)) {
+  if (!isOllama && baseUrl && !apiKey && !isLocalBaseUrl(baseUrl)) {
     return null;
+  }
+
+  if (isOllama) {
+    return createOllamaProviders({
+      baseUrl,
+      model,
+      logger: overrides.logger,
+      embeddingModel:
+        asString(provider.embeddingModel) ||
+        asString(provider.embedding_model) ||
+        asString(provider.embeddings?.model),
+      chatTimeoutMs:
+        toPositiveNumber(provider.timeoutMs || provider.timeout_ms, undefined) ||
+        (toPositiveNumber(provider.timeoutSeconds || provider.timeout_seconds, 0) * 1000 || undefined),
+      embeddingTimeoutMs:
+        toPositiveNumber(provider.embeddingTimeoutMs || provider.embedding_timeout_ms, undefined) ||
+        (toPositiveNumber(provider.embeddingTimeoutSeconds || provider.embedding_timeout_seconds, 0) * 1000 || undefined),
+    });
   }
 
   return createOpenAICompatibleProviders({

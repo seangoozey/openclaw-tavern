@@ -52,7 +52,8 @@ Current state to resume from:
 - Tool ownership investigation: plugin-owned harness generation already suppresses base OpenClaw tools by returning a final no-tool attempt. The observed media-inspection leak happened on the prompt-injection fallback path, where OpenClaw still owns the agent/tool loop. Mitigation added: `before_tool_call` blocks base tool execution during active RP sessions so fallback turns cannot call image/media tools unless a future plugin-owned media path explicitly permits them.
 - Clock/continuity plan: every texting-persona evaluation should compute elapsed time since the last interaction, compare the previous state to the current schedule-derived state, and inject that into the prompt so characters do not assume no time passed between texts.
 - Companion-auto plan: add a card-authored `conversation_continuity` extension so companion nudges can treat a 30+ minute break in an active exchange as a plausible low-pressure follow-up, separate from generic proactive texting.
-- Last verification: `npm test` passed with 141/141 tests after adding clock continuity state and card-authored conversation continuity.
+- Native Ollama provider work: OpenClaw custom providers with `api: "ollama"` should route plugin-owned generation to Ollama's `/api/chat` endpoint, preserving slash-containing model tags such as `realStomp/thebloke-mythomax-l2-kimiko-v2-13b:latest`.
+- Last verification: `npm test` passed with 144/144 tests after adding native Ollama provider support.
 
 Next live checks:
 
@@ -60,6 +61,7 @@ Next live checks:
 - Send normal messages to a non-RP agent and to the RP host outside an active session; both should be handled by OpenClaw, not the plugin.
 - Start an RP session and confirm active Telegram turns are owned by the plugin only once.
 - Run `/rp model`, `/rp model -model <openrouter-model-id>`, then one RP turn; logs/provider usage should show the new model. Use `/rp model -clear` to return to config default.
+- For Ollama, test `curl <baseUrl>/api/tags` and `curl <baseUrl>/api/chat` from inside the OpenClaw container before testing `/rp`.
 
 ## Parking Notes - 2026-06-06
 

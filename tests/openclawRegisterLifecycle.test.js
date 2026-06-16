@@ -1094,6 +1094,146 @@ test("agent harness owned generation accepts plugin env SecretRef api key", asyn
   }
 });
 
+test("agent harness owned generation supports inherited native Ollama provider", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));
+  const commands = new Map();
+  const services = new Map();
+  const hooks = new Map();
+  const harnesses = new Map();
+  const cardPath = path.join(assetDir, "nina.json");
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  let capturedBody = null;
+  await writeFile(
+    cardPath,
+    JSON.stringify({
+      name: "Nina",
+      description: "Nina answers like a dry-humored night owl.",
+      first_mes: "still up?",
+    }),
+    "utf8",
+  );
+
+  globalThis.fetch = async (url, init = {}) => {
+    capturedUrl = String(url);
+    if (capturedUrl.endsWith("/api/chat")) {
+      capturedBody = JSON.parse(String(init.body || "{}"));
+      return new Response(
+        JSON.stringify({
+          message: {
+            role: "assistant",
+            content: "local ollama works",
+          },
+          done: true,
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }
+    throw new Error(`unexpected fetch ${capturedUrl}`);
+  };
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        services,
+        hooks,
+        harnesses,
+        config: {
+          agents: {
+            defaults: {
+              model: {
+                primary: "ollama/realStomp/thebloke-mythomax-l2-kimiko-v2-13b:latest",
+              },
+            },
+          },
+          models: {
+            providers: {
+              ollama: {
+                api: "ollama",
+                apiKey: "ollama-local",
+                baseUrl: "http://192.168.1.3:30068",
+                models: [
+                  {
+                    id: "realStomp/thebloke-mythomax-l2-kimiko-v2-13b:latest",
+                    name: "realStomp/thebloke-mythomax-l2-kimiko-v2-13b:latest",
+                    contextWindow: 4096,
+                  },
+                ],
+              },
+            },
+          },
+          plugins: {
+            entries: {
+              "texting-sim": {
+                config: {
+                  agentHarness: {
+                    ownedGeneration: true,
+                    runAttemptProvider: "ollama",
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const rp = commands.get("rp");
+    const harness = harnesses.get("openclaw-rp-owned-generation");
+    assert.ok(harness);
+    const baseCtx = {
+      channel: "telegram",
+      channelId: "telegram",
+      conversationId: "555",
+      senderId: "555",
+      from: "555",
+      commandBody: "",
+      sessionKey: "agent:rp:telegram:direct:555",
+    };
+    let result = await rp.handler({ ...baseCtx, commandBody: `/rp import-card --file "${cardPath}"` });
+    assert.equal(result.isError, undefined);
+    result = await rp.handler({ ...baseCtx, commandBody: "/rp start --card Nina" });
+    assert.equal(result.isError, undefined);
+
+    const payload = await harness.runAttempt({
+      sessionId: "openclaw-session-1",
+      sessionKey: "agent:rp:telegram:direct:555",
+      sandboxSessionKey: "agent:rp:telegram:direct:555",
+      messageProvider: "telegram",
+      messageTo: "telegram:555",
+      currentChannelId: "telegram:555",
+      senderId: "555",
+      agentId: "rp",
+      provider: "ollama",
+      modelId: "realStomp/thebloke-mythomax-l2-kimiko-v2-13b:latest",
+      transcriptPrompt: "you awake?",
+      prompt: {
+        messages: [{ role: "user", content: "you awake?" }],
+      },
+      initialReplayState: {
+        replayInvalid: false,
+        hadPotentialSideEffects: false,
+      },
+    });
+
+    assert.equal(payload.assistantTexts[0], "local ollama works");
+    assert.equal(capturedUrl, "http://192.168.1.3:30068/api/chat");
+    assert.equal(capturedBody.model, "realStomp/thebloke-mythomax-l2-kimiko-v2-13b:latest");
+    assert.equal(capturedBody.stream, false);
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    globalThis.fetch = originalFetch;
+    await rm(stateDir, { recursive: true, force: true });
+    await rm(assetDir, { recursive: true, force: true });
+  }
+});
+
 test("agent harness owned generation disables OpenRouter reasoning by default", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
   const assetDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-assets-"));

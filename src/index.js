@@ -14,6 +14,7 @@ export {
   cosineSimilarity,
 } from "./utils/multilingualEmbedding.js";
 export { createOpenAICompatibleProviders } from "./providers/openaiCompatible.js";
+export { createOllamaProviders } from "./providers/ollama.js";
 export {
   createHttpAttachmentResolver,
   createTelegramAttachmentResolver,
