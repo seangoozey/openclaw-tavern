@@ -130,6 +130,12 @@ export const openclawRpPluginConfigSchema = {
           description:
             "Unsafe opt-in mode that claims matching harness turns and routes active RP sessions through plugin-owned RP generation.",
         },
+        deferSafetyToRunAttempt: {
+          type: "boolean",
+          default: false,
+          description:
+            "Unsafe compatibility escape hatch. When true, owned generation may claim provider/model-only harness checks and defer agent/session safety checks to runAttempt.",
+        },
         runAttemptProvider: {
           type: "string",
           minLength: 1,

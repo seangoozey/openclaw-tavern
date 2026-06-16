@@ -2364,6 +2364,11 @@ function getAgentHarnessConfig(api) {
   return isObject(pluginConfig?.agentHarness) ? pluginConfig.agentHarness : {};
 }
 
+function isAgentHarnessDeferredSafetyEnabled(api) {
+  const config = getAgentHarnessConfig(api);
+  return config.deferSafetyToRunAttempt === true || config.defer_safety_to_run_attempt === true;
+}
+
 function isAgentHarnessRunAttemptDiagnosticsEnabled(api) {
   return getAgentHarnessConfig(api)?.runAttemptDiagnostics === true;
 }
@@ -3850,8 +3855,12 @@ export default {
           const match = agentHarnessRunAttemptMatches(ctx);
           const agentAllowed = isRpAgentAllowed(ctx);
           const agentCandidates = [...collectAgentIdCandidates(ctx)];
+          const allowedAgentIds = normalizeAllowedAgentIds(getOpenClawRpPluginConfig(api?.config));
           const deferOwnedSafetyToRunAttempt =
-            ownedGeneration && match.matches && agentCandidates.length === 0;
+            ownedGeneration &&
+            match.matches &&
+            agentCandidates.length === 0 &&
+            (allowedAgentIds.length === 0 || isAgentHarnessDeferredSafetyEnabled(api));
           const activeRpSession =
             ownedGeneration && !deferOwnedSafetyToRunAttempt
               ? resolveActiveHarnessRpSession(ctx).session

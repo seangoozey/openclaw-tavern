@@ -269,6 +269,7 @@ Add plugin config under your OpenClaw config:
             "diagnostics": false,
             "runAttemptDiagnostics": false,
             "ownedGeneration": false,
+            "deferSafetyToRunAttempt": false,
             "runAttemptProvider": "openrouter",
             "runAttemptModel": "z-ai/glm-4.7-flash"
           }
@@ -290,6 +291,7 @@ Add plugin config under your OpenClaw config:
 - `agentHarness.diagnostics`: opt-in non-claiming harness probe. When `true`, the plugin logs sanitized `agent_harness.supports` context so you can inspect whether OpenClaw exposes the current agent/provider/model at harness-selection time.
 - `agentHarness.runAttemptDiagnostics`: unsafe opt-in harness probe. When `true`, the plugin claims matching harness selections, logs sanitized `runAttempt` parameter shape, and returns a controlled diagnostic response instead of a normal model reply. Use only on the dedicated RP agent while testing.
 - `agentHarness.ownedGeneration`: opt-in RP harness mode. When `true`, the plugin claims matching harness selections only for allowed agents with an active RP session, then routes the turn through plugin-owned RP generation.
+- `agentHarness.deferSafetyToRunAttempt`: unsafe compatibility escape hatch for OpenClaw builds whose harness `supports()` callback exposes provider/model but not agent/channel/session context. Keep this `false` when `allowedAgents` is configured unless the RP agent has an isolated provider/model path; otherwise the RP harness may claim other agents before rejecting them in `runAttempt`.
 - `agentHarness.runAttemptProvider` / `agentHarness.runAttemptModel`: optional filters for `runAttemptDiagnostics` and `ownedGeneration`. Set `runAttemptProvider` to the RP agent's resolved provider. `runAttemptModel` can be omitted if the allowed-agent and active-session gates are sufficient and you want `/rp model` to control the generation model independently.
 
 For plugin-owned OpenRouter generation, use the OpenAI-compatible provider and an env SecretRef-style API key:
@@ -334,6 +336,7 @@ For local Ollama, the safest setup is to keep the OpenClaw agent on its normal t
           },
           "agentHarness": {
             "ownedGeneration": true,
+            "deferSafetyToRunAttempt": false,
             "runAttemptProvider": "openrouter"
           }
         }
@@ -343,7 +346,7 @@ For local Ollama, the safest setup is to keep the OpenClaw agent on its normal t
 }
 ```
 
-In this mode, `agentHarness.runAttemptProvider` should match the provider used by the OpenClaw agent so the harness can claim that agent's turn, while `config.provider: "ollama"` controls which provider the plugin uses to generate the RP reply. If the agent itself is configured with provider `ollama`, set `runAttemptProvider` to `ollama` instead.
+In this mode, `agentHarness.runAttemptProvider` should match the provider used by the OpenClaw agent so the harness can claim that agent's turn, while `config.provider: "ollama"` controls which provider the plugin uses to generate the RP reply. If the agent itself is configured with provider `ollama`, set `runAttemptProvider` to `ollama` instead. On shared OpenClaw gateways, keep `deferSafetyToRunAttempt` disabled unless the RP agent has a unique `runAttemptProvider` or `runAttemptModel`; broad deferred claiming can interfere with unrelated agents.
 
 Smoke-test Ollama from inside the OpenClaw container before testing `/rp`:
 

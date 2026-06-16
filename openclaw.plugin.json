@@ -139,6 +139,10 @@
             "type": "boolean",
             "default": false
           },
+          "deferSafetyToRunAttempt": {
+            "type": "boolean",
+            "default": false
+          },
           "runAttemptProvider": {
             "type": "string",
             "minLength": 1

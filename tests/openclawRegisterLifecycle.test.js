@@ -764,8 +764,8 @@ test("agent harness owned generation respects allowedAgents before claiming", as
         modelId: "z-ai/glm-4.7-flash",
       }),
       {
-        supported: true,
-        reason: "owned_generation_deferred_safety",
+        supported: false,
+        reason: "agent_not_allowed",
       },
     );
 
@@ -776,6 +776,60 @@ test("agent harness owned generation respects allowedAgents before claiming", as
     });
     assert.equal(noSession.supported, false);
     assert.equal(noSession.reason, "no_active_rp_session");
+  } finally {
+    services.get("openclaw-rp-sqlite")?.stop();
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("agent harness owned generation can explicitly defer safety checks to runAttempt", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
+  const commands = new Map();
+  const services = new Map();
+  const hooks = new Map();
+  const harnesses = new Map();
+
+  try {
+    registerModule.register(
+      makeApi({
+        stateDir,
+        commands,
+        services,
+        hooks,
+        harnesses,
+        config: {
+          plugins: {
+            entries: {
+              "texting-sim": {
+                config: {
+                  allowedAgents: ["rp"],
+                  agentHarness: {
+                    ownedGeneration: true,
+                    deferSafetyToRunAttempt: true,
+                    runAttemptProvider: "openrouter",
+                    runAttemptModel: "z-ai/glm-4.7-flash",
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const harness = harnesses.get("openclaw-rp-owned-generation");
+    assert.ok(harness);
+
+    assert.deepEqual(
+      harness.supports({
+        provider: "openrouter",
+        modelId: "z-ai/glm-4.7-flash",
+      }),
+      {
+        supported: true,
+        reason: "owned_generation_deferred_safety",
+      },
+    );
   } finally {
     services.get("openclaw-rp-sqlite")?.stop();
     await rm(stateDir, { recursive: true, force: true });

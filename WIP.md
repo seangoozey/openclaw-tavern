@@ -499,6 +499,23 @@ Needed sections:
 - Debugging guide: `/rp state`, `/rp debug`, `/rp hooks-status`, logs, and common failures.
 - Testing/development guide: `npm test`, card update scripts, Docker smoke checks.
 
+### 16. Harness Safety On Shared Gateways
+
+Status: patched, needs Docker verification.
+
+Live issue: with `agentHarness.ownedGeneration` enabled, OpenClaw can call harness `supports()` with only provider/model context and no agent/session identifiers. The prior compatibility fallback claimed those turns and deferred safety checks to `runAttempt`, which caused the RP harness to touch unrelated agents such as `trading-coordinator` before returning `agent_not_allowed`.
+
+Implemented:
+
+- Added `agentHarness.deferSafetyToRunAttempt`, default `false`.
+- When `allowedAgents` is configured and `supports()` has no agent identity, owned generation no longer claims the turn unless `deferSafetyToRunAttempt` is explicitly enabled.
+- `deferSafetyToRunAttempt: true` remains available as an unsafe escape hatch for OpenClaw builds that cannot expose agent/session context during `supports()`. Use only when the RP agent has an isolated provider/model path or dedicated gateway.
+
+Docker check:
+
+- Verify stock/trading agents no longer produce `[openclaw-rp] agent_harness.owned_generation agent_not_allowed agents=[trading-coordinator]`.
+- Verify the RP agent still gets claimed during active `/rp` sessions. If not, either OpenClaw is not passing agent/session context to `supports()` or the RP harness needs a unique `runAttemptModel` plus explicit `deferSafetyToRunAttempt: true`.
+
 ## Maintenance Rule
 
 Update this file whenever the roadmap, implementation status, schema, runtime assumptions, or priorities change.
