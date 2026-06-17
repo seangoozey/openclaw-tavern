@@ -6,6 +6,14 @@ OpenClaw Texting Simulator is a persistent character texting runtime for OpenCla
 
 > Featured update: a Companion design inspired by [Generative Agents: Interactive Simulacra of Human Behavior](https://arxiv.org/abs/2304.03442), enabling long-memory-driven proactive outreach, proactive questioning, and action reporting.
 
+## Documentation
+
+- [Architecture](./docs/ARCHITECTURE.md): plugin-owned engine design and module boundaries.
+- [Operations](./docs/OPERATIONS.md): runtime config, owned-generation setup, Docker checks, and diagnostics.
+- [Roadmap](./docs/ROADMAP.md): planned features and deferred work.
+- [Debug Log](./docs/DEBUG_LOG.md): historical live-test investigations and conclusions.
+- [Texting Persona Extension](./docs/TEXTING_PERSONA_EXTENSION.md): card extension schema and behavior contract.
+
 ## Who This Is For
 
 - Users migrating cards/presets/lorebooks from SillyTavern to OpenClaw
@@ -129,7 +137,8 @@ Note: install entry names vary by gateway version (plugin manager button vs admi
 - `/rp state` - show active session, texting runtime state, companion schedule, and delayed-message count
 - `/rp debug [-on|-off|-status]` - trace active-session prompt/output text to a session-specific `rp-debug-trace-*.log` and show `hook-debug.log`
 - `/rp queue [-all] [-limit N]` - show pending delayed RP messages
-- `/rp hooks-status` - show native OpenClaw hook config/registration status
+- `/rp engine-status` - show plugin generation, harness trigger, warning, and native hook status
+- `/rp hooks-status` - alias for `/rp engine-status`
 - `/rp init` - initialize the OpenClaw agent as the RP host/controller by writing managed blocks to `IDENTITY.md` and `SOUL.md`
 - `/rp init -status` - show resolved host persona file paths and managed block status
 - `/rp init -restore` - remove only the managed host persona blocks

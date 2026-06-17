@@ -166,11 +166,12 @@ test("reply_payload_sending hook registers when native hook config opts in", asy
   }
 });
 
-test("/rp hooks-status reports configured and registered native hooks", async () => {
+test("/rp engine-status reports configured engine, harness, and native hooks", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-rp-register-"));
   const commands = new Map();
   const services = new Map();
   const hooks = new Map();
+  const harnesses = new Map();
 
   try {
     registerModule.register(
@@ -179,6 +180,7 @@ test("/rp hooks-status reports configured and registered native hooks", async ()
         commands,
         services,
         hooks,
+        harnesses,
         config: {
           plugins: {
             entries: {
@@ -187,8 +189,20 @@ test("/rp hooks-status reports configured and registered native hooks", async ()
                   allowConversationAccess: true,
                 },
                 config: {
+                  allowedAgents: ["rp"],
+                  provider: "ollama",
+                  ollama: {
+                    baseUrl: "http://192.168.1.3:30068",
+                    model: "dark-desires:latest",
+                  },
                   nativeHooks: {
                     inboundClaim: true,
+                  },
+                  agentHarness: {
+                    ownedGeneration: true,
+                    deferSafetyToRunAttempt: false,
+                    runAttemptProvider: "openrouter",
+                    runAttemptModel: "rp-trigger-model",
                   },
                 },
               },
@@ -200,12 +214,29 @@ test("/rp hooks-status reports configured and registered native hooks", async ()
 
     const rp = commands.get("rp");
     assert.ok(rp);
-    const result = await rp.handler({ commandBody: "/rp hooks-status" });
+    const commandCtx = {
+      commandBody: "/rp engine-status",
+      sessionKey: "agent:rp:telegram:direct:555",
+    };
+    const result = await rp.handler(commandCtx);
     assert.equal(result.isError, undefined);
-    assert.match(result.text, /OpenClaw RP hook status/);
+    assert.match(result.text, /OpenClaw RP engine status/);
+    assert.match(result.text, /allowed agents: rp/);
+    assert.match(result.text, /plugin generation provider: ollama/);
+    assert.match(result.text, /plugin generation model: dark-desires:latest/);
+    assert.match(result.text, /agent_harness_owned_generation: configured=yes available=yes registered=yes/);
+    assert.match(result.text, /agent_harness_defer_safety_to_run_attempt: no/);
+    assert.match(result.text, /agent_harness_trigger_provider: openrouter/);
+    assert.match(result.text, /agent_harness_trigger_model: rp-trigger-model/);
+    assert.match(result.text, /Warnings:/);
+    assert.match(result.text, /RP turns may fall back to the native bridge/);
     assert.match(result.text, /inbound_claim: configured=yes registered=yes/);
     assert.match(result.text, /llm_output: configured=yes registered=yes/);
     assert.match(result.text, /reply_payload_sending: configured=no registered=no/);
+
+    const alias = await rp.handler({ ...commandCtx, commandBody: "/rp hooks-status" });
+    assert.equal(alias.isError, undefined);
+    assert.match(alias.text, /OpenClaw RP engine status/);
   } finally {
     services.get("openclaw-rp-sqlite")?.stop();
     await rm(stateDir, { recursive: true, force: true });

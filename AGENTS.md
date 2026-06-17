@@ -116,8 +116,12 @@ When exporting V3 PNG cards for OpenClaw compatibility testing, embed the card J
 - `src/store/sqliteStore.js`: SQLite persistence.
 - `src/store/inMemoryStore.js`: Test/in-memory persistence.
 - `src/importers/cardImporter.js`: Card import mapping.
+- `docs/ARCHITECTURE.md`: Stable architecture, generation paths, module boundaries, and safety boundaries.
+- `docs/OPERATIONS.md`: Runtime setup, owned-generation config, Docker smoke checks, and `/rp engine-status` interpretation.
+- `docs/ROADMAP.md`: Planned features, deferred work, and completed milestones.
+- `docs/DEBUG_LOG.md`: Historical live-test/debug investigations and conclusions.
 - `docs/TEXTING_PERSONA_EXTENSION.md`: Schema and behavior contract for `data.extensions["openclaw/texting_persona"]`.
-- `wip.md`: Working notes for managing feature updates, implementation thoughts, and follow-up ideas.
+- `WIP.md`: Short active work board only. Keep current priorities and live blockers here; move durable plans to `docs/ROADMAP.md`, stable behavior to `docs/ARCHITECTURE.md` or `docs/OPERATIONS.md`, and historical investigations to `docs/DEBUG_LOG.md`.
 - `tests/`: Node test suite.
 
 ## Current Texting Persona Implementation

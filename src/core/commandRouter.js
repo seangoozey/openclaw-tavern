@@ -199,7 +199,8 @@ function helpText() {
     "  /rp state        Show active RP session/debug state",
     "  /rp debug [-on|-off|-status]  Trace active RP prompt/output text",
     "  /rp queue        Show pending delayed RP messages",
-    "  /rp hooks-status Show native OpenClaw hook config/status when available",
+    "  /rp engine-status Show plugin engine/harness/hook status when available",
+    "  /rp hooks-status   Alias for /rp engine-status",
     "  /rp pause / resume / end",
   ].join("\n");
 }
@@ -677,9 +678,10 @@ export class CommandRouter {
         return this.debugTrace(nctx, options, args);
       case "queue":
         return this.debugQueue(nctx, options);
+      case "engine-status":
       case "hooks-status":
-        return ok("Hook status is only available in native OpenClaw mode", {
-          text: "Hook status is only available in native OpenClaw mode.",
+        return ok("Engine status is only available in native OpenClaw mode", {
+          text: "Engine status is only available in native OpenClaw mode.",
         });
       default:
         throw new RPError(RP_ERROR_CODES.BAD_REQUEST, `Unknown command: ${command}`);

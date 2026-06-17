@@ -43,6 +43,7 @@ import {
 import { deliverAutoImageForTelegram, deliverAutoSpeakForTelegram, deliverAutoVideoForTelegram } from "./autoImage.js";
 import { buildChannelSessionKey } from "../utils/sessionKey.js";
 import { getTextingPersonaConfig, normalizeTextingPersonaOutput } from "../core/textingPersona.js";
+import { PLUGIN_NAME, PLUGIN_VERSION } from "../version.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -3026,11 +3027,23 @@ export default {
       return registered;
     }
 
-    function buildHooksStatusResponse() {
+    function buildEngineStatusResponse() {
+      const pluginConfig = getOpenClawRpPluginConfig(api?.config);
+      const harnessConfig = getAgentHarnessConfig(api);
+      const allowedAgentIds = normalizeAllowedAgentIds(pluginConfig);
+      const modelConfig = getCurrentModelConfig();
+      const pluginProvider = asString(pluginConfig.provider) || "openai";
+      const pluginModel = asString(modelConfig.model || modelConfig.configuredModel);
+      const harnessProvider = asString(harnessConfig.runAttemptProvider);
+      const harnessModel = asString(harnessConfig.runAttemptModel);
+      const deferSafety = isAgentHarnessDeferredSafetyEnabled(api);
       const agentHarness = {
         configured: isAgentHarnessDiagnosticsEnabled(api),
         runAttemptDiagnostics: isAgentHarnessRunAttemptDiagnosticsEnabled(api),
         ownedGeneration: isAgentHarnessOwnedGenerationEnabled(api),
+        deferSafetyToRunAttempt: deferSafety,
+        runAttemptProvider: harnessProvider,
+        runAttemptModel: harnessModel,
         available: typeof api.registerAgentHarness === "function",
         registered: registeredAgentHarness,
       };
@@ -3080,24 +3093,61 @@ export default {
           registered: registeredNativeHooks.has("message_sent"),
         },
       };
+      const warnings = [];
+      if (agentHarness.ownedGeneration && !agentHarness.registered) {
+        warnings.push("owned generation is configured but the agent harness is not registered");
+      }
+      if (agentHarness.ownedGeneration && allowedAgentIds.length > 0 && !deferSafety) {
+        warnings.push("allowedAgents is configured and deferred safety is disabled; if OpenClaw supports() lacks agent/session context, RP turns may fall back to the native bridge");
+      }
+      if (agentHarness.ownedGeneration && deferSafety && !harnessModel) {
+        warnings.push("deferred safety is enabled without a runAttemptModel filter; use an isolated trigger provider/model to avoid claiming unrelated agents");
+      }
+      if (agentHarness.ownedGeneration && !router?.modelProvider?.generate) {
+        warnings.push("plugin-owned generation has no configured model provider");
+      }
       const lines = [
-        "OpenClaw RP hook status",
+        "OpenClaw RP engine status",
+        `- plugin id: ${PLUGIN_NAME}`,
+        `- plugin version: ${PLUGIN_VERSION}`,
+        `- allowed agents: ${allowedAgentIds.length > 0 ? allowedAgentIds.join(", ") : "(all)"}`,
+        `- plugin generation provider: ${pluginProvider}`,
+        `- plugin generation model: ${pluginModel || "(provider default)"}`,
+        `- plugin model source: ${modelConfig.model ? "sqlite override" : "config default"}`,
         `- conversation access: ${hasConversationHookAccess(api) ? "enabled" : "disabled"}`,
         `- agent_harness_diagnostics: configured=${agentHarness.configured ? "yes" : "no"} available=${agentHarness.available ? "yes" : "no"} registered=${agentHarness.registered ? "yes" : "no"}`,
         `- agent_harness_run_attempt_diagnostics: configured=${agentHarness.runAttemptDiagnostics ? "yes" : "no"} available=${agentHarness.available ? "yes" : "no"} registered=${agentHarness.registered ? "yes" : "no"}`,
         `- agent_harness_owned_generation: configured=${agentHarness.ownedGeneration ? "yes" : "no"} available=${agentHarness.available ? "yes" : "no"} registered=${agentHarness.registered ? "yes" : "no"}`,
+        `- agent_harness_defer_safety_to_run_attempt: ${deferSafety ? "yes" : "no"}`,
+        `- agent_harness_trigger_provider: ${harnessProvider || "(any)"}`,
+        `- agent_harness_trigger_model: ${harnessModel || "(any)"}`,
       ];
+      if (warnings.length > 0) {
+        lines.push("Warnings:");
+        for (const warning of warnings) {
+          lines.push(`- ${warning}`);
+        }
+      }
+      lines.push("Native hooks:");
       for (const [name, status] of Object.entries(nativeHooks)) {
         lines.push(`- ${name}: configured=${status.configured ? "yes" : "no"} registered=${status.registered ? "yes" : "no"}`);
       }
       return {
         ok: true,
-        message: "OpenClaw RP hook status",
+        message: "OpenClaw RP engine status",
         data: {
           text: lines.join("\n"),
           native_hooks: nativeHooks,
           agent_harness: agentHarness,
+          allowed_agents: allowedAgentIds,
+          plugin_generation: {
+            provider: pluginProvider,
+            model: pluginModel,
+            source: modelConfig.model ? "sqlite override" : "config default",
+            configured_model: modelConfig.configuredModel,
+          },
           conversation_access: hasConversationHookAccess(api),
+          warnings,
         },
       };
     }
@@ -4168,8 +4218,8 @@ export default {
             };
           }
 
-          if (parsedCommand?.command === "hooks-status") {
-            const response = buildHooksStatusResponse();
+          if (parsedCommand?.command === "engine-status" || parsedCommand?.command === "hooks-status") {
+            const response = buildEngineStatusResponse();
             return {
               text: formatResponseText(response),
             };
@@ -4212,7 +4262,7 @@ export default {
               ...response,
               data: {
                 ...response.data,
-                text: `${response.data.text}\n  /rp init [--status|--restore]  Initialize or inspect the RP host persona\n  /rp sync-agent-persona     ${t("help_sync_agent_persona")}\n  /rp restore-agent-persona  ${t("help_restore_agent_persona")}`,
+                text: `${response.data.text}\n  /rp engine-status          Show plugin engine, harness, and hook status\n  /rp hooks-status           Alias for /rp engine-status\n  /rp init [--status|--restore]  Initialize or inspect the RP host persona\n  /rp sync-agent-persona     ${t("help_sync_agent_persona")}\n  /rp restore-agent-persona  ${t("help_restore_agent_persona")}`,
               },
             };
           }

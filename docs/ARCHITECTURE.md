@@ -1,176 +1,193 @@
-# OpenClaw RP Plugin Architecture
+# OpenClaw Texting Simulator Architecture
 
 [中文版本](./ARCHITECTURE.zh-CN.md)
 
-This document explains the implementation architecture, module boundaries, and extension points of the OpenClaw RP plugin for contributors.
+This document describes the current architecture for contributors. The project
+started as an OpenClaw RP/card plugin, but the active design is broader: an
+OpenClaw-hosted persistent texting simulator.
 
-## 1. Design Goals
+## Design Position
 
-- SillyTavern asset compatibility (Card/Preset/Lorebook)
-- Minimal-intrusion integration into OpenClaw plugin runtime
-- Stable session control (state machine + mutex + retry)
-- Multimodal output and long-memory support (summary + embedding recall)
+OpenClaw is the host/controller environment. The plugin owns the character
+runtime.
 
-## 2. Top-Level Modules
+Responsibilities:
 
-- `src/openclaw/register.js`
-  - Native OpenClaw registration entry
-  - Registers `/rp` command and hooks: `message:preprocessed`, `message_received`, `before_prompt_build`, `llm_output`
-  - Resolves provider config and initializes SQLite store
-- `src/plugin.js`
-  - Generic plugin factory: `createRPPlugin()`
-  - Composes `CommandRouter`, `SessionManager`, and Store
-- `src/core/commandRouter.js`
-  - Parses/routes `/rp` commands
-  - Handles import, session lifecycle, retry, multimodal commands
-- `src/core/sessionManager.js`
-  - Main dialogue pipeline
-  - Session mutex, summary trigger, prompt preparation, memory indexing and recall
-- `src/core/promptBuilder.js`
-  - Deterministic prompt assembly order
-  - Token budget allocation and truncation
-- `src/store/sqliteStore.js` / `src/store/inMemoryStore.js`
-  - Persistence and test store implementations
-- `src/importers/*.js`
-  - ST asset parsing/mapping
-- `src/providers/*.js`
-  - OpenAI-compatible and Gemini provider adapters
+- OpenClaw: transport, agent/workspace shell, plugin lifecycle, config surface,
+  commands, scheduler, and deployment container.
+- Plugin: card identity, RP session state, prompt construction, runtime clock,
+  memory, schedule context, delayed/proactive messages, media helpers, and
+  character reply generation.
+- Character cards: static defaults, persona text, examples, lore hooks, and
+  simulator metadata under `data.extensions`.
 
-## 3. Runtime Flow
+The OpenClaw agent should be initialized with `/rp init` as a host/controller.
+It is not permanently rewritten into each imported character. Imported cards live
+in plugin-managed sessions.
 
-```mermaid
-flowchart LR
-  A["User Message"] --> B["OpenClaw /rp Command Or Hook"]
-  B --> C["CommandRouter"]
-  C --> D["SessionManager"]
-  D --> E["PromptBuilder"]
-  E --> F["modelProvider.generate"]
-  F --> D
-  D --> G["Store (SQLite/InMemory)"]
-  C --> H["ttsProvider/imageProvider"]
+## Generation Paths
+
+### Preferred: Agent Harness Owned Generation
+
+The intended active RP path is:
+
+```text
+User message
+  -> OpenClaw prepares an agent/model run
+  -> Agent Harness supports() selects the RP harness
+  -> runAttempt() calls plugin-owned SessionManager.processDialogue()
+  -> plugin provider generates the character reply
+  -> OpenClaw receives a final no-tool attempt result
 ```
 
-### 3.1 Command Path (`/rp`)
+This path prevents the normal OpenClaw agent/model/tool loop from producing the
+active RP reply.
 
-1. `parseRpCommand()` parses command and options.
-2. `CommandRouter` dispatches subcommands:
-   - `import-*`: parse/map/store assets
-   - `start/session/pause/resume/end`: session lifecycle
-   - `retry`: rollback latest assistant turn and regenerate
-   - `speak/image`: multimodal branches
-3. Returns normalized response envelope: `{ ok, code, message, data }`.
+Important split:
 
-### 3.2 Dialogue Path (non-command message)
+- Harness trigger provider/model: the OpenClaw-facing provider/model used only
+  to identify the RP agent run.
+- Plugin generation provider/model: the provider/model that actually writes the
+  character reply, for example local Ollama.
 
-1. `message_received` enters `SessionManager.processDialogue()`.
-2. Session is resolved via `channel_session_key`.
-3. Per-session mutex serializes processing.
-4. User turn is appended; summarization may trigger.
-5. Prompt is prepared and model config resolved.
-6. `modelProvider.generate()` is invoked.
-7. Assistant turn is appended and embedding index is updated.
+Because some OpenClaw builds call harness `supports()` with only provider/model
+context, the RP agent should use an isolated trigger provider/model when
+`agentHarness.deferSafetyToRunAttempt` is enabled.
 
-### 3.3 Native OpenClaw Hook Injection Path
+### Fallback: Prompt-Injection Bridge
 
-`register.js` additionally supports native OpenClaw message flow:
+The fallback bridge uses native OpenClaw hooks:
 
-- `message_received`: append user turn to RP session and keep routing context
-- `before_prompt_build`: inject RP prompt into OpenClaw main model request
-- `llm_output`: persist model output as assistant turn
+- `message_received`: append the user turn to plugin storage and remember
+  routing context.
+- `before_prompt_build`: inject RP system/context prompt into the OpenClaw model
+  run.
+- `before_message_write`: block active RP turns from polluting the main OpenClaw
+  conversation history.
+- `llm_output`: capture assistant output back into plugin storage.
 
-This enables RP behavior to cooperate with OpenClaw’s core LLM pipeline, not only `/rp` command responses.
+This path can work, but OpenClaw still owns the model/tool loop. It is therefore
+not the stable target for active RP because model tool calls, base-agent identity
+leaks, and terminal formatting failures can still occur.
 
-## 4. Prompt Assembly Strategy
+### Native Owned Hooks
 
-`buildPrompt()` default order:
+Optional hooks such as `inbound_claim`, `before_agent_reply`, and
+`before_agent_run` are fallback/debug candidates. In the current target runtime,
+Agent Harness owned generation is the preferred pre-agent ownership layer.
 
-1. `system_prompt`
-2. Character core block (name/description/personality/scenario)
-3. Matched lorebook entries
-4. Example dialogue
-5. Summary
-6. Memory recall (`Relevant Memory Recall`)
-7. Recent turns
-8. `post_history_instructions`
+## Core Modules
 
-Default budgets (configurable):
+- `src/openclaw/register.js`
+  - Native OpenClaw registration.
+  - Registers `/rp`, hooks, Agent Harness, Telegram scheduler, and native tools.
+  - Resolves plugin config and provider stacks.
+- `src/plugin.js`
+  - Reusable plugin factory for non-native/test integration.
+- `src/core/commandRouter.js`
+  - `/rp` command parsing and routing.
+- `src/core/sessionManager.js`
+  - Dialogue generation, summaries, memory prep, delayed replies, companion
+    nudges, and texting-persona state updates.
+- `src/core/promptBuilder.js`
+  - Deterministic prompt assembly from card, lorebook, summary, memory, recent
+    turns, and runtime state.
+- `src/core/textingPersona.js`
+  - Texting-persona card extension reader, schedule/state evolution, runtime
+    prompt block, proactive prompt, availability decisions, and output
+    normalization.
+- `src/store/schema.js`
+  - SQLite schema.
+- `src/store/sqliteStore.js`
+  - Persistent store.
+- `src/store/inMemoryStore.js`
+  - Test store.
+- `src/importers/cardImporter.js`
+  - Character Card V1/V2/V3 import and PNG metadata extraction.
+- `src/providers/*.js`
+  - OpenAI-compatible, Gemini, and Ollama provider adapters.
 
-- `maxPromptTokens = 8000`
-- `lorebook = 2000`
-- `example = 1000`
-- `summary = 1000`
-- `memory = 900`
+## Runtime State
 
-## 5. Long Memory Implementation
+The card is static. Live mutable state belongs in plugin storage.
 
-### 5.1 Indexing
+Important persisted data:
 
-- User/assistant turns can be persisted in `rp_turn_embeddings`
-- Language tag is heuristically detected (`detectLanguageTag()`)
-- Embedding source:
-  - external provider (OpenAI/Gemini)
-  - built-in fallback (`hashed-multilingual-*`)
+- `rp_assets`, `rp_cards`, `rp_presets`, `rp_lorebooks`
+- `rp_sessions`, `rp_session_lorebooks`
+- `rp_turns`, `rp_summaries`
+- `rp_turn_embeddings`
+- `rp_session_states`
+- `rp_delayed_messages`
+- `rp_runtime_settings`
 
-### 5.2 Retrieval
+`rp_runtime_settings` stores operator-level overrides such as `/rp model`.
+`rp_session_states` stores per-session texting-persona state.
 
-- Entry point: `searchTurnEmbeddings()`
-- Uses SQLite vector distance function when extension is available
-- Falls back to JS cosine similarity otherwise
-- Results are deduplicated and injected into prompt memory section
+## Texting Persona Extension
 
-## 6. Session and Consistency Controls
+OpenClaw-specific simulator metadata belongs under:
 
-- Session key format: `{channel_type}:{platform_context_id}:{channel_id}:{user_id}`
-- Session states: `active / paused / summarizing / ended`
-- Concurrency: `SessionMutex`
-- Error model: `RPError` + unified `RP_*` error codes
-- Retry policy:
-  - dialogue generation with backoff retry
-  - independent summary retry config
-  - independent multimodal timeout/retry
+```json
+{
+  "data": {
+    "extensions": {
+      "openclaw/texting_persona": {}
+    }
+  }
+}
+```
 
-## 7. Data Model (SQLite)
+The extension can define:
 
-Core tables (`src/store/schema.js`):
+- `default_state`
+- `state_presets`
+- `schedule`
+- `availability`
+- `conversation_continuity`
+- `message_style`
+- `proactive_texting`
+- `privacy_model`
+- boundary/fallback behavior
 
-- Assets: `rp_assets`, `rp_cards`, `rp_presets`, `rp_lorebooks`
-- Sessions: `rp_sessions`, `rp_session_lorebooks`
-- Dialogue: `rp_turns`, `rp_summaries`
-- Memory vectors: `rp_turn_embeddings`
+See `docs/TEXTING_PERSONA_EXTENSION.md` for the contract.
 
-Key constraints:
+## Prompt Assembly
 
-- Partial unique index on active session statuses in `rp_sessions`
-- FK cascade to preserve referential consistency
+`buildPrompt()` assembles:
 
-## 8. Provider Abstraction
+1. card system prompt
+2. character core block
+3. matched lorebook entries
+4. example dialogue
+5. conversation summary
+6. relevant memory recall
+7. runtime state / clock block
+8. recent turns
+9. post-history instructions
 
-`createRPPlugin()` uses DI-style provider contracts:
+Texting-persona sessions add runtime clock, schedule, elapsed-time, continuity,
+availability, and style constraints through the runtime state block.
 
-- `modelProvider.generate/summarize`
-- `ttsProvider.synthesize`
-- `imageProvider.generate`
-- `embeddingProvider.embed`
+## Safety Boundaries
 
-In native OpenClaw mode, `register.js` resolves providers from `api.config`, `provider.json`, and env vars, then selects OpenAI-compatible or Gemini stacks.
+- Preserve ordinary Character Card V2/V3 behavior for cards without
+  `openclaw/texting_persona`.
+- Keep OpenClaw-specific simulator data namespaced under `data.extensions`.
+- Persist live state in plugin storage, not in the card.
+- Treat plugin-computed time as authoritative.
+- Do not rely on prompt obedience when plugin-side enforcement is practical.
+- Keep character-domain details in cards, not hardcoded runtime logic.
+- Do not enable broad deferred harness claiming on shared providers/models.
 
-## 9. Extension Points and Contribution Guidance
+## Verification
 
-### Practical Extension Points
+Run:
 
-- New model backend: add provider adapter and inject
-- New import format: add parser under `src/importers/`
-- New context policy: tune/extend `contextPolicy`
-- New channel integration: add adapter normalization/send mapping
+```bash
+npm test
+```
 
-### Contribution Guidance
-
-- Add/adjust tests before behavior changes (`tests/` covers core paths)
-- Keep response envelope backward compatible (`ok/code/message/data`)
-- Avoid mixing storage details into router layer; keep boundaries explicit
-
-## 10. Known Boundaries
-
-- Vector retrieval quality depends on runtime availability of SQLite vector extension
-- Native install entry naming may differ by OpenClaw version (command-based vs UI-based)
-- Current UX is still command-first (no dedicated Web management console yet)
+Use `/rp engine-status` in Docker to confirm the live engine path, harness
+trigger filters, plugin generation provider/model, warnings, and native hook
+registration.
